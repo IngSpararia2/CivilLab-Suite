@@ -15,8 +15,10 @@ def create_window(on_return_to_suite: Callable[[], None] | None = None) -> QMain
     from precon_lab.database import initialize_database
     from precon_lab.ui.main_window import MainWindow
     from precon_lab.ui.styles import APP_STYLESHEET
+    from civillab_suite.ui.shared_controls import install_shared_control_tuning
 
     initialize_database()
+    install_shared_control_tuning()
     window = MainWindow(on_return_to_suite=on_return_to_suite)
     window.setStyleSheet(APP_STYLESHEET)
     return window

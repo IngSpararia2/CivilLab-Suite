@@ -11,6 +11,7 @@ from .database import initialize_database
 from .ui.main_window import MainWindow
 from .ui.splash_screen import AppSplashScreen
 from .ui.styles import APP_STYLESHEET
+from civillab_suite.ui.shared_controls import install_shared_control_tuning
 
 
 def main() -> int:
@@ -21,6 +22,7 @@ def main() -> int:
     app.setOrganizationName("PRECONCRETOS")
     app.setOrganizationDomain("prefabricadoslab.local")
     app.setStyle("Fusion")
+    install_shared_control_tuning()
     app.setStyleSheet(APP_STYLESHEET)
     if APP_ICON_PATH.exists():
         app.setWindowIcon(QIcon(str(APP_ICON_PATH)))

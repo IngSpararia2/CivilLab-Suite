@@ -2,56 +2,15 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, QSettings, Qt
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import (
-    QApplication,
-    QComboBox,
     QHeaderView,
-    QProxyStyle,
-    QStyle,
     QTableView,
     QTableWidget,
     QWidget,
 )
 
-
-class ComboBoxDropDownStyle(QProxyStyle):
-    """Conserva el campo del combo visible cuando se abre su lista."""
-
-    def styleHint(self, hint, option=None, widget=None, returnData=None):  # noqa: N802
-        if hint == QStyle.StyleHint.SH_ComboBox_Popup:
-            return 0
-        return super().styleHint(hint, option, widget, returnData)
-
-
-def _install_combo_box_drop_down_style() -> None:
-    app = QApplication.instance()
-    if app is None or getattr(app, "_combo_box_drop_down_style", None) is not None:
-        return
-    style = ComboBoxDropDownStyle(app.style())
-    style.setParent(app)
-    app.setStyle(style)
-    app._combo_box_drop_down_style = style
-
-
-class ComboPopupSizer(QObject):
-    """Garantiza popups legibles y consistentes para todos los desplegables."""
-
-    MAX_VISIBLE_ROWS = 8
-
-    def __init__(self, parent: QObject | None = None) -> None:
-        super().__init__(parent)
-
-    def register_descendants(self, root: QWidget) -> None:
-        for combo in root.findChildren(QComboBox):
-            self.register(combo)
-
-    def register(self, combo: QComboBox) -> None:
-        combo.setMaxVisibleItems(self.MAX_VISIBLE_ROWS)
-        view = combo.view()
-        view.setVerticalScrollMode(QTableView.ScrollMode.ScrollPerPixel)
-        view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+from civillab_suite.ui.shared_controls import tune_shared_controls
 
 
 def tune_table_headers(root: QWidget) -> None:
@@ -146,6 +105,5 @@ def finalize_table_columns(table: QTableView) -> None:
 def tune_widget_tree(root: QWidget) -> None:
     """Aplica la ergonomía compartida también a diálogos creados dinámicamente."""
 
-    _install_combo_box_drop_down_style()
-    ComboPopupSizer(root).register_descendants(root)
+    tune_shared_controls(root)
     tune_table_headers(root)

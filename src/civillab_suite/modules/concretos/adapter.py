@@ -16,11 +16,9 @@ def create_window(on_return_to_suite: Callable[[], None] | None = None) -> QMain
     from concrete_mix_designer.services.app_state import AppState
     from concrete_mix_designer.ui.main_window import MainWindow
     from concrete_mix_designer.ui.styles import APP_STYLESHEET
-    from concrete_mix_designer.ui.widgets.combo_popup import ComboPopupSizer
+    from civillab_suite.ui.shared_controls import install_shared_control_tuning
 
-    if not hasattr(app, "combo_popup_sizer"):
-        app.combo_popup_sizer = ComboPopupSizer(app)
-        app.installEventFilter(app.combo_popup_sizer)
+    install_shared_control_tuning()
 
     material_repository = MaterialRepository(DATABASE_PATH)
     laboratory_repository = LaboratoryRepository(DATABASE_PATH)
