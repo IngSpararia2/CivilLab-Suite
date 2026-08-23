@@ -389,17 +389,6 @@ class InspectionPlanPage(QWidget):
         form.addRow("", self.schedule_widget)
         form.addRow("Observaciones:", self.observations_edit)
         form.addRow("", add_button)
-        separator = QFrame()
-        separator.setFrameShape(QFrame.Shape.HLine)
-        separator.setFrameShadow(QFrame.Shadow.Sunken)
-        catalog_title = QLabel("Catálogo de ensayos")
-        catalog_title.setObjectName("SectionTitle")
-        catalog_button = QPushButton("Ver ensayos")
-        catalog_button.setObjectName("Secondary")
-        catalog_button.clicked.connect(self._show_catalog)
-        form.addRow("", separator)
-        form.addRow("", catalog_title)
-        form.addRow("", catalog_button)
         columns = QHBoxLayout()
         columns.setSpacing(12)
         columns.addWidget(plan_group, 3)
@@ -499,9 +488,6 @@ class InspectionPlanPage(QWidget):
 
     def _show_requirements(self, material_id: int, test_id: int) -> None:
         RequirementsDialog(material_id, test_id, self).exec()
-
-    def _show_catalog(self) -> None:
-        CatalogDialog(self).exec()
 
     def refresh(self) -> None:
         with session_scope() as session:

@@ -49,6 +49,9 @@ class MainWindow(QMainWindow):
         state: AppState,
         *,
         on_return_to_suite: Callable[[], None] | None = None,
+        shared_catalog_page: QWidget | None = None,
+        shared_pie_page: QWidget | None = None,
+        shared_calendar_page: QWidget | None = None,
     ):
         super().__init__()
         self.state = state
@@ -75,19 +78,31 @@ class MainWindow(QMainWindow):
         self.results_page = ResultsPage(state)
         self.design_library_page = DesignLibraryPage(state)
         self.production_page = ProductionPage(state)
-        self.calendar_page = LaboratoryCalendarPage(state)
+        self.calendar_page = shared_calendar_page or LaboratoryCalendarPage(state)
         self.materials_page = MaterialsPage(state)
         self.standards_page = StandardsPage()
+        self.catalog_page = shared_catalog_page
+        self.pie_page = shared_pie_page
 
-        tab_definitions = (
+        tab_definitions = [
             (self.dashboard_page, "Configurar", "1 · Configuración inicial"),
             (self.laboratory_tab, "Laboratorio", "2 · Diseño de mezcla"),
             (self.results_page, "Dosificación", "3 · Dosificación y registro"),
             (self.design_library_page, "Diseños", "4 · Diseños guardados"),
             (self.production_page, "Producción", "5 · Producción y ensayos"),
             (self.calendar_page, "Calendario", "6 · Calendario de laboratorio"),
-            (self.materials_page, "Materiales", "7 · Gestor de materiales"),
-            (self.standards_page, "Normativas", "8 · Biblioteca de normativas"),
+        ]
+        if self.pie_page is not None:
+            tab_definitions.append((self.pie_page, "PIE", "7 · Plan de Inspección y Ensayo"))
+        tab_definitions.append((self.materials_page, "Materiales", "8 · Gestor de materiales"))
+        if self.catalog_page is not None:
+            tab_definitions.append(
+                (self.catalog_page, "Catálogo", "9 · Catálogo canónico de ensayos")
+            )
+        # The technical library remains available because it contains design guidance
+        # beyond the canonical assay catalog.
+        tab_definitions.append(
+            (self.standards_page, "Normativas", "10 · Biblioteca de normativas")
         )
         for page, label, tooltip in tab_definitions:
             index = self.tabs.addTab(page, label)
@@ -110,7 +125,8 @@ class MainWindow(QMainWindow):
             lambda: self.tabs.setCurrentWidget(self.laboratory_tab)
         )
         self.results_page.production_created.connect(self._open_production)
-        self.calendar_page.open_production_requested.connect(self._open_production)
+        if hasattr(self.calendar_page, "open_production_requested"):
+            self.calendar_page.open_production_requested.connect(self._open_production)
 
         self._build_menu()
         self.statusBar().showMessage("Listo")
@@ -357,6 +373,12 @@ class MainWindow(QMainWindow):
     def _open_production(self, production_id: int) -> None:
         self.production_page.select_production(production_id)
         self.tabs.setCurrentWidget(self.production_page)
+
+    def navigate_to_activity(self, target) -> None:
+        if target.activity_type == "production":
+            self._open_production(int(target.source_id))
+        elif target.activity_type == "shared_pie" and self.pie_page is not None:
+            self.tabs.setCurrentWidget(self.pie_page)
 
     def _about(self) -> None:
         QMessageBox.about(

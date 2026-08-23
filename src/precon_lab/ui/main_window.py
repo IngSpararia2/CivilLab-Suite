@@ -785,6 +785,9 @@ class MainWindow(QMainWindow):
         self,
         *,
         on_return_to_suite: Callable[[], None] | None = None,
+        shared_catalog_page: QWidget | None = None,
+        shared_pie_page: QWidget | None = None,
+        shared_calendar_page: QWidget | None = None,
     ) -> None:
         super().__init__()
         self._on_return_to_suite = on_return_to_suite
@@ -795,28 +798,57 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(QIcon(str(APP_ICON_PATH)))
 
         self.stack = QStackedWidget()
-        self.pages: list[tuple[str, QWidget]] = [
-            ("Inicio", DashboardPage(self.refresh_all)),
-            ("Producción", ProductionPage(self.refresh_all)),
-            ("Plan de Inspección y Ensayo", InspectionPlanPage(self.refresh_all)),
-            ("Itinerario", ItineraryPage(self.refresh_all)),
-            ("Calendario", CalendarPage()),
-            ("Resultados", ResultsPage(self.refresh_all)),
-            ("Historial", HistoryPage()),
-            ("Importar Excel", ImportPage(self.refresh_all)),
-            ("Herramientas", ToolsPage()),
-        ]
-        self.page_hints = [
-            "Indicadores y estado operativo del laboratorio",
-            "Registro de lotes, productos y muestras",
-            "Planificación configurable de controles y ensayos",
-            "Ejecución y seguimiento del trabajo diario",
-            "Agenda visual de actividades y ensayos",
-            "Captura y actualización de resultados provisionales",
-            "Consulta consolidada de producción y ensayos",
-            "Incorporación segura de resúmenes de máquinas",
-            "Módulos complementarios del laboratorio",
-        ]
+        self.shared_pie_page = shared_pie_page
+        self.shared_catalog_page = shared_catalog_page
+        self.shared_calendar_page = shared_calendar_page
+        if shared_calendar_page is None:
+            self.pages = [
+                ("Inicio", DashboardPage(self.refresh_all)),
+                ("Producción", ProductionPage(self.refresh_all)),
+                ("Plan de Inspección y Ensayo", InspectionPlanPage(self.refresh_all)),
+                ("Itinerario", ItineraryPage(self.refresh_all)),
+                ("Calendario", CalendarPage()),
+                ("Resultados", ResultsPage(self.refresh_all)),
+                ("Historial", HistoryPage()),
+                ("Importar Excel", ImportPage(self.refresh_all)),
+                ("Herramientas", ToolsPage()),
+            ]
+            self.page_hints = [
+                "Indicadores y estado operativo del laboratorio",
+                "Registro de lotes, productos y muestras",
+                "Planificación configurable de controles y ensayos",
+                "Ejecución y seguimiento del trabajo diario",
+                "Agenda visual de actividades y ensayos",
+                "Captura y actualización de resultados provisionales",
+                "Consulta consolidada de producción y ensayos",
+                "Incorporación segura de resúmenes de máquinas",
+                "Módulos complementarios del laboratorio",
+            ]
+        else:
+            # The shared calendar has parity with Itinerary (instructions, checklist,
+            # reopen and supported rescheduling), so the redundant navigation is omitted.
+            self.pages = [
+                ("Inicio", DashboardPage(self.refresh_all)),
+                ("Producción", ProductionPage(self.refresh_all)),
+                ("Plan de Inspección y Ensayo", shared_pie_page),
+                ("Catálogo de Ensayos", shared_catalog_page),
+                ("Calendario", shared_calendar_page),
+                ("Resultados", ResultsPage(self.refresh_all)),
+                ("Historial", HistoryPage()),
+                ("Importar Excel", ImportPage(self.refresh_all)),
+                ("Herramientas", ToolsPage()),
+            ]
+            self.page_hints = [
+                "Indicadores y estado operativo del laboratorio",
+                "Registro de lotes, productos y muestras",
+                "Plan compartido de obligaciones de ensayo",
+                "Catálogo canónico suministrado por CivilLab",
+                "Agenda operativa unificada de las áreas habilitadas",
+                "Captura y actualización de resultados provisionales",
+                "Consulta consolidada de producción y ensayos",
+                "Incorporación segura de resúmenes de máquinas",
+                "Módulos complementarios del laboratorio",
+            ]
         for _name, page in self.pages:
             page_layout = page.layout()
             if page_layout is not None:
@@ -1004,6 +1036,23 @@ class MainWindow(QMainWindow):
             return
         self.hide()
         self._on_return_to_suite()
+
+    def navigate_to_activity(self, target) -> None:
+        if target.activity_type == "shared_pie" and self.shared_pie_page is not None:
+            self.stack.setCurrentWidget(self.shared_pie_page)
+            return
+        if target.activity_type != "sample_set":
+            return
+        results_page = next(
+            (page for name, page in self.pages if name == "Resultados"), None
+        )
+        if results_page is None:
+            return
+        results_page.refresh()
+        index = results_page.set_combo.findData(int(target.source_id))
+        if index >= 0:
+            results_page.set_combo.setCurrentIndex(index)
+        self.stack.setCurrentWidget(results_page)
 
     def closeEvent(self, event) -> None:
         if self._on_return_to_suite is not None and self.isVisible():

@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from civillab_suite.registry import ModuleDescriptor
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 
 
 def _normalized(value: str) -> str:
@@ -138,10 +138,172 @@ class CoreDatabase:
                     applied_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS catalog_seed_versions (
+                    seed_key TEXT PRIMARY KEY,
+                    version INTEGER NOT NULL,
+                    fingerprint TEXT NOT NULL,
+                    applied_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS material_types (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    code TEXT NOT NULL UNIQUE,
+                    canonical_name TEXT NOT NULL,
+                    normalized_name TEXT NOT NULL UNIQUE,
+                    active INTEGER NOT NULL DEFAULT 1
+                );
+
+                CREATE TABLE IF NOT EXISTS material_type_modules (
+                    material_type_id INTEGER NOT NULL
+                        REFERENCES material_types(id) ON DELETE CASCADE,
+                    module_id TEXT NOT NULL
+                        REFERENCES suite_modules(id) ON DELETE CASCADE,
+                    source TEXT NOT NULL DEFAULT '',
+                    PRIMARY KEY (material_type_id, module_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS material_objects (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    material_type_id INTEGER NOT NULL
+                        REFERENCES material_types(id) ON DELETE RESTRICT,
+                    code TEXT NOT NULL,
+                    canonical_name TEXT NOT NULL,
+                    supplier_source TEXT NOT NULL DEFAULT '',
+                    description TEXT NOT NULL DEFAULT '',
+                    active INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE (material_type_id, code)
+                );
+
+                CREATE TABLE IF NOT EXISTS assay_material_types (
+                    assay_id INTEGER NOT NULL REFERENCES assays(id) ON DELETE CASCADE,
+                    material_type_id INTEGER NOT NULL
+                        REFERENCES material_types(id) ON DELETE CASCADE,
+                    module_id TEXT NOT NULL REFERENCES suite_modules(id) ON DELETE CASCADE,
+                    standard_id INTEGER REFERENCES standards(id) ON DELETE SET NULL,
+                    normative_frequency TEXT NOT NULL DEFAULT '',
+                    procedure_detail TEXT NOT NULL DEFAULT '',
+                    preferred INTEGER NOT NULL DEFAULT 0,
+                    source TEXT NOT NULL DEFAULT '',
+                    PRIMARY KEY (assay_id, material_type_id, module_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS catalog_requirements (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source_key TEXT NOT NULL,
+                    material_type_id INTEGER NOT NULL
+                        REFERENCES material_types(id) ON DELETE CASCADE,
+                    assay_id INTEGER NOT NULL REFERENCES assays(id) ON DELETE CASCADE,
+                    standard_id INTEGER REFERENCES standards(id) ON DELETE SET NULL,
+                    module_id TEXT NOT NULL REFERENCES suite_modules(id) ON DELETE CASCADE,
+                    minimum REAL,
+                    maximum REAL,
+                    unit TEXT NOT NULL DEFAULT '',
+                    comparison_operator TEXT NOT NULL DEFAULT '',
+                    requirement_text TEXT NOT NULL DEFAULT '',
+                    condition_text TEXT NOT NULL DEFAULT '',
+                    aggregation TEXT NOT NULL DEFAULT '',
+                    age_days INTEGER,
+                    grading TEXT NOT NULL DEFAULT '',
+                    source_detail TEXT NOT NULL DEFAULT '',
+                    verification_status TEXT NOT NULL DEFAULT '',
+                    UNIQUE (module_id, source_key)
+                );
+
+                CREATE TABLE IF NOT EXISTS pie_plans (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    assay_id INTEGER REFERENCES assays(id) ON DELETE RESTRICT,
+                    method_id INTEGER REFERENCES assay_methods(id) ON DELETE SET NULL,
+                    material_type_id INTEGER REFERENCES material_types(id) ON DELETE RESTRICT,
+                    material_object_id INTEGER REFERENCES material_objects(id) ON DELETE RESTRICT,
+                    legacy_name TEXT NOT NULL DEFAULT '',
+                    responsible TEXT NOT NULL DEFAULT '',
+                    frequency TEXT NOT NULL CHECK(frequency IN (
+                        'daily', 'weekly', 'monthly', 'custom_days', 'custom_months'
+                    )),
+                    recurrence_interval INTEGER NOT NULL CHECK(recurrence_interval > 0),
+                    start_date TEXT NOT NULL,
+                    duration_days INTEGER NOT NULL DEFAULT 1
+                        CHECK(duration_days BETWEEN 1 AND 365),
+                    weekday INTEGER,
+                    week_ordinal INTEGER,
+                    observations TEXT NOT NULL DEFAULT '',
+                    active INTEGER NOT NULL DEFAULT 1,
+                    source_module_id TEXT REFERENCES suite_modules(id) ON DELETE RESTRICT,
+                    source_table TEXT NOT NULL DEFAULT '',
+                    source_id TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    deactivated_at TEXT,
+                    UNIQUE (source_module_id, source_table, source_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS pie_plan_modules (
+                    plan_id INTEGER NOT NULL REFERENCES pie_plans(id) ON DELETE CASCADE,
+                    module_id TEXT NOT NULL REFERENCES suite_modules(id) ON DELETE CASCADE,
+                    PRIMARY KEY (plan_id, module_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS pie_plan_steps (
+                    plan_id INTEGER NOT NULL REFERENCES pie_plans(id) ON DELETE CASCADE,
+                    day_number INTEGER NOT NULL CHECK(day_number > 0),
+                    description TEXT NOT NULL,
+                    PRIMARY KEY (plan_id, day_number)
+                );
+
+                CREATE TABLE IF NOT EXISTS pie_occurrence_status (
+                    plan_id INTEGER NOT NULL REFERENCES pie_plans(id) ON DELETE RESTRICT,
+                    occurrence_start TEXT NOT NULL,
+                    day_number INTEGER NOT NULL CHECK(day_number > 0),
+                    rescheduled_date TEXT,
+                    completed_at TEXT,
+                    notes TEXT NOT NULL DEFAULT '',
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (plan_id, occurrence_start, day_number)
+                );
+
+                CREATE TABLE IF NOT EXISTS shared_results (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    assay_id INTEGER NOT NULL REFERENCES assays(id) ON DELETE RESTRICT,
+                    method_id INTEGER REFERENCES assay_methods(id) ON DELETE SET NULL,
+                    material_object_id INTEGER NOT NULL
+                        REFERENCES material_objects(id) ON DELETE RESTRICT,
+                    tested_on TEXT NOT NULL,
+                    origin_module_id TEXT NOT NULL
+                        REFERENCES suite_modules(id) ON DELETE RESTRICT,
+                    source_type TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    report_reference TEXT NOT NULL DEFAULT '',
+                    valid_until TEXT,
+                    created_at TEXT NOT NULL,
+                    UNIQUE (origin_module_id, source_type, source_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS pie_result_satisfactions (
+                    result_id INTEGER NOT NULL REFERENCES shared_results(id) ON DELETE RESTRICT,
+                    plan_id INTEGER NOT NULL REFERENCES pie_plans(id) ON DELETE RESTRICT,
+                    occurrence_start TEXT NOT NULL,
+                    matched_at TEXT NOT NULL,
+                    match_basis TEXT NOT NULL,
+                    PRIMARY KEY (result_id, plan_id, occurrence_start)
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_assay_methods_assay
                     ON assay_methods(assay_id);
                 CREATE INDEX IF NOT EXISTS idx_standard_assays_assay
                     ON standard_assays(assay_id);
+                CREATE INDEX IF NOT EXISTS idx_assay_material_module
+                    ON assay_material_types(module_id, assay_id);
+                CREATE INDEX IF NOT EXISTS idx_catalog_requirements_lookup
+                    ON catalog_requirements(module_id, assay_id, material_type_id);
+                CREATE INDEX IF NOT EXISTS idx_pie_plans_active_start
+                    ON pie_plans(active, start_date);
+                CREATE INDEX IF NOT EXISTS idx_pie_plan_modules_module
+                    ON pie_plan_modules(module_id, plan_id);
+                CREATE INDEX IF NOT EXISTS idx_shared_results_match
+                    ON shared_results(material_object_id, assay_id, tested_on, status);
                 """
             )
             connection.execute(
@@ -183,6 +345,12 @@ class CoreDatabase:
         ).fetchone()
         assert row is not None
         return int(row["id"])
+
+    def upsert_assay(self, name: str) -> int:
+        """Create or update one canonical assay without exposing catalog CRUD in UI."""
+
+        with self.connect() as connection:
+            return self._upsert_assay(connection, name)
 
     def link_assay_to_module(
         self,
@@ -247,8 +415,19 @@ class CoreDatabase:
                 FROM laboratory_tests ORDER BY id
             """,
             "applicabilities": """
-                SELECT laboratory_test_id, standard_id
-                FROM test_applicabilities ORDER BY laboratory_test_id, standard_id
+                SELECT material_type_id, laboratory_test_id, standard_id,
+                       normative_frequency, procedure_detail, preferred
+                FROM test_applicabilities
+                ORDER BY material_type_id, laboratory_test_id, standard_id
+            """,
+            "materials": """
+                SELECT id, code, name, active FROM material_types ORDER BY id
+            """,
+            "requirements": """
+                SELECT seed_key, material_type_id, laboratory_test_id, standard_id,
+                       minimum, maximum, unit, operator, requirement_text, condition,
+                       aggregation, age_days, grading, source_detail, verification_status
+                FROM test_requirements ORDER BY seed_key
             """,
         }
         for key, query in queries.items():
@@ -264,7 +443,10 @@ class CoreDatabase:
         source = sqlite3.connect(f"file:{source_path.as_posix()}?mode=ro", uri=True)
         source.row_factory = sqlite3.Row
         try:
-            required = {"standard_references", "laboratory_tests", "test_applicabilities"}
+            required = {
+                "material_types", "standard_references", "laboratory_tests",
+                "test_applicabilities", "test_requirements",
+            }
             existing = {
                 row[0]
                 for row in source.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
@@ -296,6 +478,32 @@ class CoreDatabase:
                     SELECT laboratory_test_id, standard_id
                     FROM test_applicabilities
                     WHERE standard_id IS NOT NULL
+                    """
+                )
+            )
+            material_rows = list(
+                source.execute(
+                    "SELECT id, code, name, active FROM material_types ORDER BY id"
+                )
+            )
+            applicability_rows = list(
+                source.execute(
+                    """
+                    SELECT material_type_id, laboratory_test_id, standard_id,
+                           normative_frequency, procedure_detail, preferred
+                    FROM test_applicabilities
+                    ORDER BY material_type_id, laboratory_test_id
+                    """
+                )
+            )
+            requirement_rows = list(
+                source.execute(
+                    """
+                    SELECT seed_key, material_type_id, laboratory_test_id, standard_id,
+                           minimum, maximum, unit, operator, requirement_text, condition,
+                           aggregation, age_days, grading, source_detail,
+                           verification_status
+                    FROM test_requirements ORDER BY seed_key
                     """
                 )
             )
@@ -331,10 +539,46 @@ class CoreDatabase:
                     (standard_id,),
                 )
 
+            material_ids: dict[int, int] = {}
+            for item in material_rows:
+                code = str(item["code"])
+                target.execute(
+                    """
+                    INSERT INTO material_types (
+                        code, canonical_name, normalized_name, active
+                    ) VALUES (?, ?, ?, ?)
+                    ON CONFLICT(code) DO UPDATE SET
+                        canonical_name = excluded.canonical_name,
+                        normalized_name = excluded.normalized_name,
+                        active = excluded.active
+                    """,
+                    (
+                        code, item["name"], _normalized(item["name"]),
+                        int(bool(item["active"])),
+                    ),
+                )
+                material = target.execute(
+                    "SELECT id FROM material_types WHERE code = ?", (code,)
+                ).fetchone()
+                assert material is not None
+                material_id = int(material["id"])
+                material_ids[int(item["id"])] = material_id
+                target.execute(
+                    """
+                    INSERT INTO material_type_modules (material_type_id, module_id, source)
+                    VALUES (?, 'prefabricados', 'precon_lab')
+                    ON CONFLICT(material_type_id, module_id)
+                    DO UPDATE SET source = excluded.source
+                    """,
+                    (material_id,),
+                )
+
             assay_ids: set[int] = set()
             method_ids: set[int] = set()
+            source_assay_ids: dict[int, int] = {}
             for item in test_rows:
                 assay_id = self._upsert_assay(target, item["name"])
+                source_assay_ids[int(item["id"])] = assay_id
                 assay_ids.add(assay_id)
                 target.execute(
                     """
@@ -393,10 +637,101 @@ class CoreDatabase:
                         (standard_id, assay_id),
                     )
 
+            for item in applicability_rows:
+                assay_id = source_assay_ids.get(int(item["laboratory_test_id"]))
+                material_id = material_ids.get(int(item["material_type_id"]))
+                if assay_id is None or material_id is None:
+                    continue
+                standard_id = (
+                    standard_ids.get(int(item["standard_id"]))
+                    if item["standard_id"] is not None else None
+                )
+                for module_id in ("prefabricados",):
+                    target.execute(
+                        """
+                        INSERT INTO assay_modules (assay_id, module_id, source)
+                        VALUES (?, ?, 'core_catalog_v1')
+                        ON CONFLICT(assay_id, module_id)
+                        DO UPDATE SET source = excluded.source
+                        """,
+                        (assay_id, module_id),
+                    )
+                    target.execute(
+                        """
+                        INSERT INTO material_type_modules (
+                            material_type_id, module_id, source
+                        ) VALUES (?, ?, 'core_catalog_v1')
+                        ON CONFLICT(material_type_id, module_id)
+                        DO UPDATE SET source = excluded.source
+                        """,
+                        (material_id, module_id),
+                    )
+                    target.execute(
+                        """
+                        INSERT INTO assay_material_types (
+                            assay_id, material_type_id, module_id, standard_id,
+                            normative_frequency, procedure_detail, preferred, source
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'precon_lab_v1')
+                        ON CONFLICT(assay_id, material_type_id, module_id) DO UPDATE SET
+                            standard_id = excluded.standard_id,
+                            normative_frequency = excluded.normative_frequency,
+                            procedure_detail = excluded.procedure_detail,
+                            preferred = excluded.preferred,
+                            source = excluded.source
+                        """,
+                        (
+                            assay_id, material_id, module_id, standard_id,
+                            item["normative_frequency"], item["procedure_detail"],
+                            int(bool(item["preferred"])),
+                        ),
+                    )
+
+            for item in requirement_rows:
+                assay_id = source_assay_ids.get(int(item["laboratory_test_id"]))
+                material_id = material_ids.get(int(item["material_type_id"]))
+                if assay_id is None or material_id is None:
+                    continue
+                standard_id = (
+                    standard_ids.get(int(item["standard_id"]))
+                    if item["standard_id"] is not None else None
+                )
+                target.execute(
+                    """
+                    INSERT INTO catalog_requirements (
+                        source_key, material_type_id, assay_id, standard_id, module_id,
+                        minimum, maximum, unit, comparison_operator, requirement_text,
+                        condition_text, aggregation, age_days, grading, source_detail,
+                        verification_status
+                    ) VALUES (?, ?, ?, ?, 'prefabricados', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(module_id, source_key) DO UPDATE SET
+                        material_type_id = excluded.material_type_id,
+                        assay_id = excluded.assay_id,
+                        standard_id = excluded.standard_id,
+                        minimum = excluded.minimum,
+                        maximum = excluded.maximum,
+                        unit = excluded.unit,
+                        comparison_operator = excluded.comparison_operator,
+                        requirement_text = excluded.requirement_text,
+                        condition_text = excluded.condition_text,
+                        aggregation = excluded.aggregation,
+                        age_days = excluded.age_days,
+                        grading = excluded.grading,
+                        source_detail = excluded.source_detail,
+                        verification_status = excluded.verification_status
+                    """,
+                    (
+                        item["seed_key"], material_id, assay_id, standard_id,
+                        item["minimum"], item["maximum"], item["unit"], item["operator"],
+                        item["requirement_text"], item["condition"], item["aggregation"],
+                        item["age_days"], item["grading"], item["source_detail"],
+                        item["verification_status"],
+                    ),
+                )
+
             target.execute(
                 """
                 INSERT INTO migration_runs (source_key, fingerprint, applied_at)
-                VALUES ('prefabricados_catalog_v1', ?, ?)
+                VALUES ('prefabricados_catalog_v3', ?, ?)
                 ON CONFLICT(source_key) DO UPDATE SET
                     fingerprint = excluded.fingerprint,
                     applied_at = excluded.applied_at
@@ -411,10 +746,19 @@ class CoreDatabase:
             fingerprint=fingerprint,
         )
 
+    def migration_applied(self, source_key: str) -> bool:
+        with self.connect() as connection:
+            return connection.execute(
+                "SELECT 1 FROM migration_runs WHERE source_key = ?", (source_key,)
+            ).fetchone() is not None
+
     def counts(self) -> dict[str, int]:
         tables = (
             "suite_modules", "laboratories", "assays", "assay_methods", "standards",
             "assay_modules", "standard_modules", "standard_assays", "method_standards",
+            "material_types", "material_objects", "assay_material_types", "pie_plans",
+            "pie_plan_modules", "shared_results", "pie_result_satisfactions",
+            "catalog_requirements",
         )
         with self.connect() as connection:
             return {
