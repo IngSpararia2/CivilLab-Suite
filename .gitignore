@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+deployment/
+*.egg-info/
+
+# Local operational data and user imports are never source artifacts.
+data/**/*.db
+data/**/*.sqlite3
+data/**/*.xlsx
+data/**/*.xls

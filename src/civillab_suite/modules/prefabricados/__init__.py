@@ -1,0 +1,1 @@
+"""Prefabricados Lab integration adapter."""

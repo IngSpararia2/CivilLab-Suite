@@ -1,0 +1,1 @@
+"""Concretos Lab integration adapter."""

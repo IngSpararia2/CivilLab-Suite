@@ -1,0 +1,43 @@
+[app]
+
+title = CivilLab Suite
+project_dir = ..
+input_file = app.py
+exec_directory = dist
+project_file =
+icon =
+
+[python]
+
+python_path =
+packages = Nuitka==4.0
+android_packages = buildozer==1.5.0,cython==0.29.33
+
+[qt]
+
+qml_files =
+excluded_qml_plugins =
+modules =
+plugins =
+
+[android]
+
+wheel_pyside =
+wheel_shiboken =
+plugins =
+
+[nuitka]
+
+macos.permissions =
+mode = onefile
+extra_args = --quiet --noinclude-qt-translations --include-package=civillab_suite --include-package=concrete_mix_designer --include-package=precon_lab --include-data-dir=assets=assets --windows-console-mode=disable
+
+[buildozer]
+
+mode = debug
+recipe_dir =
+jars_dir =
+ndk_path =
+sdk_path =
+local_libs =
+arch =
