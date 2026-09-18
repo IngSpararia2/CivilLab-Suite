@@ -21,6 +21,11 @@ from concrete_mix_designer.domain.metadata_models import (
     DesignSpecification,
     MaterialCharacterization,
 )
+from concrete_mix_designer.domain.mix_normalization import (
+    PERCENT_TOLERANCE,
+    PercentageEntry,
+    quantities_from_mass_percentages,
+)
 from concrete_mix_designer.domain.models import (
     ConstraintMode,
     Material,
@@ -57,6 +62,9 @@ class AppState(QObject):
         self.current_saved_design_id: int | None = None
         self.auto_recalculate = True
         self.is_dirty = False
+        self.percentage_mode = False
+        self.percentage_values: dict[str, float] = {}
+        self.percentage_error = ""
         self.last_result = self.engine.recalculate(self.design)
 
     @property
@@ -149,12 +157,21 @@ class AppState(QObject):
         )
 
     def reset_design(self) -> None:
+        self.percentage_mode = False
+        self.percentage_values.clear()
+        self.percentage_error = ""
         self.design = self._build_default_design()
         self.current_saved_design_id = None
         self.recalculate()
         self.message.emit("Se restauró la mezcla inicial.")
 
     def recalculate(self, changed_uid: str | None = None) -> SolveResult:
+        if self.percentage_mode:
+            if self.percentage_total_is_valid:
+                return self._apply_percentage_quantities()
+            self.is_dirty = True
+            self.design_changed.emit()
+            return self.last_result
         self.last_result = self.engine.recalculate(self.design, changed_uid)
         self.is_dirty = False
         self.design_changed.emit()
@@ -174,13 +191,173 @@ class AppState(QObject):
             self.design_changed.emit()
 
     def set_quantity(self, uid: str, value: float) -> None:
+        if self.percentage_mode:
+            return
         component = self.design.component(uid)
         if component is None:
             return
         component.quantity = value
         self._after_edit(changed_uid=uid)
 
+    @property
+    def percentage_total(self) -> float:
+        return sum(
+            self.percentage_values.get(component.uid, 0.0)
+            for component in self.design.enabled_components()
+            if component.category != MaterialCategory.AIR
+        )
+
+    @property
+    def percentage_total_is_valid(self) -> bool:
+        return abs(self.percentage_total - 100.0) <= PERCENT_TOLERANCE
+
+    @property
+    def percentage_design_is_valid(self) -> bool:
+        return self.percentage_total_is_valid and not self.percentage_error
+
+    def set_percentage_mode(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        if enabled == self.percentage_mode:
+            return
+        if enabled:
+            mass_components = [
+                component
+                for component in self.design.enabled_components()
+                if component.category != MaterialCategory.AIR
+            ]
+            total_mass = sum(component.quantity for component in mass_components)
+            if total_mass <= 0:
+                raise ValueError(
+                    "No es posible derivar porcentajes porque la masa total en kg es cero."
+                )
+            percentages = {
+                component.uid: component.quantity / total_mass * 100.0
+                for component in mass_components
+            }
+            air_volume = sum(
+                component.quantity
+                for component in self.design.by_category(MaterialCategory.AIR)
+            )
+            quantities_from_mass_percentages(
+                [
+                    PercentageEntry(
+                        key=component.uid,
+                        percentage=percentages[component.uid],
+                        specific_gravity=component.material.specific_gravity,
+                    )
+                    for component in mass_components
+                ],
+                air_volume_l=air_volume,
+                target_volume_l=self.design.parameters.target_volume_l,
+            )
+            self.percentage_values = percentages
+            self.percentage_mode = True
+            self.percentage_error = ""
+            self.is_dirty = False
+            self.design_changed.emit()
+            return
+
+        self.percentage_mode = False
+        self.percentage_values.clear()
+        self.percentage_error = ""
+        self.recalculate()
+
+    def set_percentage(self, uid: str, value: float) -> None:
+        if not self.percentage_mode:
+            return
+        component = self.design.component(uid)
+        if component is None or component.category == MaterialCategory.AIR:
+            return
+        self.percentage_values[uid] = max(float(value), 0.0)
+        if self.percentage_total_is_valid:
+            self._apply_percentage_quantities()
+        else:
+            self.percentage_error = ""
+            self.is_dirty = True
+            self.design_changed.emit()
+
+    def _apply_percentage_quantities(self) -> SolveResult:
+        entries = [
+            PercentageEntry(
+                key=component.uid,
+                percentage=self.percentage_values.get(component.uid, 0.0),
+                specific_gravity=component.material.specific_gravity,
+            )
+            for component in self.design.enabled_components()
+            if component.category != MaterialCategory.AIR
+        ]
+        air_volume = sum(
+            component.quantity
+            for component in self.design.by_category(MaterialCategory.AIR)
+        )
+        try:
+            quantities = quantities_from_mass_percentages(
+                entries,
+                air_volume_l=air_volume,
+                target_volume_l=self.design.parameters.target_volume_l,
+            )
+        except ValueError as error:
+            self.percentage_error = str(error)
+            self.design.warnings[:] = [str(error)]
+            self.is_dirty = True
+            self.last_result = SolveResult(False, 0.0, list(self.design.warnings))
+            self.design_changed.emit()
+            return self.last_result
+
+        for uid, quantity in quantities.items():
+            component = self.design.component(uid)
+            if component is not None:
+                component.quantity = quantity
+        self.percentage_error = ""
+        residual = self.design.parameters.target_volume_l - self.design.total_absolute_volume_l
+        converged = abs(residual) <= self.engine.TOLERANCE_L
+        self.design.warnings[:] = (
+            []
+            if converged
+            else [f"El cálculo por porcentaje deja un residual de {residual:+.3f} L."]
+        )
+        self.last_result = SolveResult(converged, residual, list(self.design.warnings))
+        self.is_dirty = False
+        self.design_changed.emit()
+        return self.last_result
+
+    def replace_with_normalized_recipe(
+        self, entries: list[tuple[Material, float]]
+    ) -> None:
+        """Replace only the active mix composition with a normalized recipe."""
+
+        if not entries:
+            raise ValueError("La receta normalizada no contiene materiales.")
+        material_keys = [
+            material.id if material.id is not None else id(material)
+            for material, _quantity in entries
+        ]
+        if len(material_keys) != len(set(material_keys)):
+            raise ValueError("No se puede incluir el mismo material más de una vez.")
+        self.percentage_mode = False
+        self.percentage_values.clear()
+        self.percentage_error = ""
+        self.design.components = [
+            MixComponent(material=material, quantity=float(quantity), locked=False)
+            for material, quantity in entries
+        ]
+        self.design.ratio_constraints.clear()
+        self.design.parameters.w_cm_locked = False
+        self.design.parameters.target_volume_l = 1000.0
+        if self.design.total_cementitious_kg > 0 and self.design.water_kg >= 0:
+            self.design.parameters.target_w_cm = self.design.actual_w_cm
+        self.current_saved_design_id = None
+        self.recalculate()
+        if (
+            self.design.by_category(MaterialCategory.WATER)
+            and self.design.by_category(MaterialCategory.CEMENTITIOUS)
+        ):
+            self.design.parameters.target_w_cm = self.design.actual_w_cm
+            self.design_changed.emit()
+
     def set_locked(self, uid: str, locked: bool) -> None:
+        if self.percentage_mode:
+            return
         component = self.design.component(uid)
         if component is None:
             return
@@ -203,9 +380,9 @@ class AppState(QObject):
             params.slump_mm = slump_mm
         if nominal_max_size_mm is not None:
             params.nominal_max_size_mm = nominal_max_size_mm
-        if target_w_cm is not None:
+        if target_w_cm is not None and not self.percentage_mode:
             params.target_w_cm = target_w_cm
-        if w_cm_locked is not None:
+        if w_cm_locked is not None and not self.percentage_mode:
             params.w_cm_locked = w_cm_locked
         self._after_edit()
 
@@ -237,6 +414,8 @@ class AppState(QObject):
         denominator_uid: str | None,
         target_value: float,
     ) -> RatioConstraint:
+        if self.percentage_mode:
+            raise ValueError("Las relaciones están suspendidas durante el cálculo por porcentaje.")
         if mode in {
             ConstraintMode.MASS_RATIO,
             ConstraintMode.PERCENT_OF_B,
@@ -256,6 +435,8 @@ class AppState(QObject):
         return constraint
 
     def update_ratio_constraint(self, uid: str, target_value: float, enabled: bool) -> None:
+        if self.percentage_mode:
+            return
         constraint = next((item for item in self.design.ratio_constraints if item.uid == uid), None)
         if constraint is None:
             return
@@ -264,12 +445,16 @@ class AppState(QObject):
         self._after_edit()
 
     def remove_ratio_constraint(self, uid: str) -> None:
+        if self.percentage_mode:
+            return
         self.design.ratio_constraints = [
             item for item in self.design.ratio_constraints if item.uid != uid
         ]
         self._after_edit()
 
     def add_component(self, material: Material) -> MixComponent:
+        if self.percentage_mode:
+            raise ValueError("Desactiva el cálculo por porcentaje para cambiar los componentes.")
         if material.category == MaterialCategory.AIR and self.design.by_category(MaterialCategory.AIR):
             raise ValueError("La mezcla ya tiene un componente de aire.")
         quantity = 0.0
@@ -279,6 +464,8 @@ class AppState(QObject):
         return component
 
     def remove_component(self, uid: str) -> None:
+        if self.percentage_mode:
+            return
         self.design.components = [component for component in self.design.components if component.uid != uid]
         self.design.ratio_constraints = [
             constraint
@@ -337,6 +524,9 @@ class AppState(QObject):
 
     def load_design(self, path: Path) -> None:
         payload = json.loads(path.read_text(encoding="utf-8"))
+        self.percentage_mode = False
+        self.percentage_values.clear()
+        self.percentage_error = ""
         self.design = MixDesign.from_dict(payload)
         self.current_saved_design_id = None
         self.recalculate()
@@ -367,6 +557,8 @@ class AppState(QObject):
         automatic-revision behaviour is intentionally not used because it was
         ambiguous for operators and required loading a source record first.
         """
+        if self.percentage_mode and not self.percentage_design_is_valid:
+            raise ValueError("Los porcentajes deben sumar 100 % antes de guardar el diseño.")
         if self.is_dirty:
             self.recalculate()
         record = self.laboratory_repository.create_design(
@@ -391,6 +583,9 @@ class AppState(QObject):
         record = self.laboratory_repository.get_design(design_id)
         if record is None:
             raise ValueError("El diseño seleccionado no existe.")
+        self.percentage_mode = False
+        self.percentage_values.clear()
+        self.percentage_error = ""
         self.design = self.laboratory_repository.load_mix_design(design_id)
         self.current_saved_design_id = design_id
         self.recalculate()

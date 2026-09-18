@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import partial
 
 from PySide6.QtCore import QLocale, Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QIcon
 from PySide6.QtWidgets import (
     QAbstractItemDelegate,
     QAbstractItemView,
@@ -26,11 +26,15 @@ from PySide6.QtWidgets import (
 )
 
 from civillab_suite.ui.shared_controls import (
+    SHARED_CONTROL_ASSETS_DIR,
     ExplicitFocusDoubleSpinBox,
     ensure_table_row_height,
 )
 from concrete_mix_designer.domain.models import CATEGORY_LABELS, ConstraintMode, MaterialCategory
 from concrete_mix_designer.services.app_state import AppState
+from concrete_mix_designer.ui.dialogs.inverse_mix_calculator_dialog import (
+    InverseMixCalculatorDialog,
+)
 from concrete_mix_designer.ui.dialogs.ratio_constraint_dialog import (
     CONSTRAINT_LABELS,
     RatioConstraintDialog,
@@ -47,17 +51,42 @@ TARGET_SUFFIXES = {
 }
 QUANTITY_ROLE = Qt.ItemDataRole.UserRole + 1
 
+LOCK_COLUMN = 0
+MATERIAL_COLUMN = 1
+PERCENTAGE_COLUMN = 2
+TYPE_COLUMN = 3
+QUANTITY_COLUMN = 4
+UNIT_COLUMN = 5
+SG_COLUMN = 6
+VOLUME_COLUMN = 7
+
 
 class QuantityDelegate(QStyledItemDelegate):
     """Create a numeric editor only while a quantity cell is being edited."""
 
     quantity_committed = Signal(str, float)
 
+    def __init__(
+        self,
+        parent=None,
+        *,
+        maximum: float = 10000.0,
+        decimals: int = 3,
+        single_step: float = 1.0,
+        minimum_width: int = 124,
+    ):
+        super().__init__(parent)
+        self.maximum = maximum
+        self.decimals = decimals
+        self.single_step = single_step
+        self.minimum_width = minimum_width
+
     def createEditor(self, parent, option, index):  # noqa: N802
         editor = ExplicitFocusDoubleSpinBox(parent)
-        editor.setRange(0.0, 10000.0)
-        editor.setDecimals(3)
-        editor.setSingleStep(1.0)
+        editor.setRange(0.0, self.maximum)
+        editor.setDecimals(self.decimals)
+        editor.setSingleStep(self.single_step)
+        editor.setMinimumWidth(self.minimum_width)
         editor.setKeyboardTracking(False)
         editor.editingFinished.connect(lambda: self._finish_editor(editor))
         return editor
@@ -71,7 +100,7 @@ class QuantityDelegate(QStyledItemDelegate):
             return
         editor.setProperty("_civillab_quantity_committed", True)
         value = float(editor.value())
-        model.setData(index, QLocale().toString(value, "f", 3), Qt.DisplayRole)
+        model.setData(index, QLocale().toString(value, "f", self.decimals), Qt.DisplayRole)
         model.setData(index, value, QUANTITY_ROLE)
         uid = index.data(Qt.ItemDataRole.UserRole)
         if uid is not None:
@@ -128,17 +157,46 @@ class WorkspacePage(QWidget):
         self.ratio_spin.editingFinished.connect(self._ratio_finished)
         self.ratio_lock = QCheckBox("Bloquear relación a/mc")
         self.ratio_lock.toggled.connect(self._ratio_lock_changed)
+        self.percentage_check = QCheckBox("Calcular por porcentaje")
+        percentage_tooltip = (
+            "El 100 % corresponde a los componentes expresados en kg. "
+            "El aire se mantiene en litros y se descuenta del volumen disponible."
+        )
+        self.percentage_check.setToolTip(percentage_tooltip)
+        self.percentage_check.toggled.connect(self._percentage_mode_changed)
+        self.percentage_total_label = QLabel("Σ 100,000 %")
+        self.percentage_total_label.setObjectName("StatusPill")
+        self.percentage_total_label.setToolTip(percentage_tooltip)
+        self.inverse_calculator_button = QToolButton()
+        self.inverse_calculator_button.setIcon(
+            QIcon(str(SHARED_CONTROL_ASSETS_DIR / "calculator.svg"))
+        )
+        self.inverse_calculator_button.setToolTip("Calculadora inversa de mezcla")
+        self.inverse_calculator_button.setAccessibleName("Calculadora inversa de mezcla")
+        self.inverse_calculator_button.clicked.connect(self._open_inverse_calculator)
         ratio_row = QHBoxLayout()
         ratio_row.addWidget(QLabel("Relación agua/material cementante:"))
         ratio_row.addWidget(self.ratio_spin)
         ratio_row.addWidget(self.ratio_lock)
+        ratio_row.addWidget(self.percentage_check)
+        ratio_row.addWidget(self.percentage_total_label)
+        ratio_row.addWidget(self.inverse_calculator_button)
         ratio_row.addStretch()
 
-        # Physical design table only. Composition percentages and admixture
-        # dosage are intentionally removed and represented as visible rules.
-        self.table = QTableWidget(0, 7)
+        # Keep the percentage column permanent so delegates and column indices
+        # remain stable when the alternate calculation mode is toggled.
+        self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(
-            ["Candado", "Material", "Tipo", "Cantidad", "Unidad", "G.E.", "Volumen L"]
+            [
+                "Candado",
+                "Material",
+                "Porcentaje %",
+                "Tipo",
+                "Cantidad",
+                "Unidad",
+                "G.E.",
+                "Volumen L",
+            ]
         )
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
@@ -148,24 +206,38 @@ class WorkspacePage(QWidget):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.quantity_delegate = QuantityDelegate(self.table)
         self.quantity_delegate.quantity_committed.connect(self._quantity_committed)
-        self.table.setItemDelegateForColumn(3, self.quantity_delegate)
+        self.percentage_delegate = QuantityDelegate(
+            self.table,
+            maximum=100.0,
+            decimals=3,
+            single_step=0.1,
+            minimum_width=118,
+        )
+        self.percentage_delegate.quantity_committed.connect(self._percentage_committed)
+        self.table.setItemDelegateForColumn(QUANTITY_COLUMN, self.quantity_delegate)
+        self.table.setItemDelegateForColumn(PERCENTAGE_COLUMN, self.percentage_delegate)
         self.table.cellClicked.connect(self._start_quantity_edit)
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(1, QHeaderView.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        for column in (0, 3, 4, 5, 6):
+        header.setSectionResizeMode(MATERIAL_COLUMN, QHeaderView.Stretch)
+        header.setSectionResizeMode(TYPE_COLUMN, QHeaderView.ResizeToContents)
+        for column in (LOCK_COLUMN, UNIT_COLUMN, SG_COLUMN, VOLUME_COLUMN):
             header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(PERCENTAGE_COLUMN, QHeaderView.Interactive)
+        header.resizeSection(PERCENTAGE_COLUMN, 128)
+        header.setSectionResizeMode(QUANTITY_COLUMN, QHeaderView.Interactive)
+        header.resizeSection(QUANTITY_COLUMN, 136)
+        self.table.setColumnHidden(PERCENTAGE_COLUMN, True)
 
         self.material_combo = QComboBox()
-        add_button = QPushButton("Agregar componente")
-        add_button.clicked.connect(self._add_component)
-        remove_button = QPushButton("Eliminar seleccionado")
-        remove_button.setObjectName("Danger")
-        remove_button.clicked.connect(self._remove_selected)
+        self.add_component_button = QPushButton("Agregar componente")
+        self.add_component_button.clicked.connect(self._add_component)
+        self.remove_component_button = QPushButton("Eliminar seleccionado")
+        self.remove_component_button.setObjectName("Danger")
+        self.remove_component_button.clicked.connect(self._remove_selected)
         component_controls = QHBoxLayout()
         component_controls.addWidget(self.material_combo, 1)
-        component_controls.addWidget(add_button)
-        component_controls.addWidget(remove_button)
+        component_controls.addWidget(self.add_component_button)
+        component_controls.addWidget(self.remove_component_button)
 
         relations_title = QLabel("Relaciones y dosificaciones")
         relations_title.setObjectName("SectionTitle")
@@ -188,12 +260,14 @@ class WorkspacePage(QWidget):
         constraints_header.setSectionResizeMode(3, QHeaderView.Stretch)
         for column in (0, 4, 5):
             constraints_header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
+        constraints_header.setSectionResizeMode(4, QHeaderView.Interactive)
+        constraints_header.resizeSection(4, 176)
         constraints_header.setSectionResizeMode(6, QHeaderView.Interactive)
-        constraints_header.resizeSection(6, 96)
+        constraints_header.resizeSection(6, 104)
         constraints_header.setMinimumSectionSize(54)
 
-        add_constraint = QPushButton("Añadir relación o dosificación")
-        add_constraint.clicked.connect(self._add_constraint)
+        self.add_constraint_button = QPushButton("Añadir relación o dosificación")
+        self.add_constraint_button.clicked.connect(self._add_constraint)
 
         left_card = QFrame()
         left_card.setObjectName("Card")
@@ -206,7 +280,7 @@ class WorkspacePage(QWidget):
         left_layout.addWidget(relations_title)
         left_layout.addWidget(relations_help)
         left_layout.addWidget(self.constraints_table, 1)
-        left_layout.addWidget(add_constraint)
+        left_layout.addWidget(self.add_constraint_button)
 
         self.volume_widget = VolumeStackWidget()
         self.total_metric = QLabel("—")
@@ -279,6 +353,38 @@ class WorkspacePage(QWidget):
             self.pending_label.setText("Cambios pendientes" if self.state.is_dirty else "")
             self.pending_label.setVisible(self.state.is_dirty)
 
+            percentage_mode = self.state.percentage_mode
+            self.percentage_check.blockSignals(True)
+            self.percentage_check.setChecked(percentage_mode)
+            self.percentage_check.blockSignals(False)
+            self.table.setColumnHidden(PERCENTAGE_COLUMN, not percentage_mode)
+            self.percentage_total_label.setVisible(percentage_mode)
+            total_percentage = self.state.percentage_total
+            self.percentage_total_label.setText(f"Σ {total_percentage:.3f} %")
+            percentage_valid = self.state.percentage_design_is_valid
+            self.percentage_total_label.setStyleSheet(
+                "color: #176b43; font-weight: 700;"
+                if percentage_valid
+                else "color: #b54708; font-weight: 700;"
+            )
+            suspended_tooltip = (
+                "Este control está temporalmente suspendido mientras se calcula por porcentaje."
+            )
+            for widget in (
+                self.ratio_spin,
+                self.ratio_lock,
+                self.add_component_button,
+                self.remove_component_button,
+                self.add_constraint_button,
+            ):
+                widget.setEnabled(not percentage_mode)
+                widget.setToolTip(suspended_tooltip if percentage_mode else "")
+            self.manual_button.setEnabled(
+                not percentage_mode
+                and (not self.state.auto_recalculate or self.state.is_dirty)
+            )
+            self.save_design_button.setEnabled(not percentage_mode or percentage_valid)
+
             self.ratio_spin.blockSignals(True)
             self.ratio_spin.setValue(design.parameters.target_w_cm)
             self.ratio_spin.blockSignals(False)
@@ -301,25 +407,51 @@ class WorkspacePage(QWidget):
             self._refreshing = False
 
     def _populate_row(self, row: int, component) -> None:
+        percentage_mode = self.state.percentage_mode
         relation_controlled = component.uid in self.state.design.relation_controlled_uids
         lock_button = QToolButton()
         lock_button.setCheckable(True)
         lock_button.setChecked(component.locked)
         lock_button.setText("🔒" if component.locked else "🔓")
-        lock_button.setToolTip("Bloquear o liberar este componente")
+        lock_button.setEnabled(not percentage_mode)
+        lock_button.setToolTip(
+            "Candado temporalmente suspendido durante el cálculo por porcentaje."
+            if percentage_mode
+            else "Bloquear o liberar este componente"
+        )
         lock_button.toggled.connect(partial(self._lock_changed, component.uid, lock_button))
-        self.table.setCellWidget(row, 0, lock_button)
+        self.table.setCellWidget(row, LOCK_COLUMN, lock_button)
 
         name_item = QTableWidgetItem(component.material.name)
         name_item.setData(Qt.UserRole, component.uid)
-        self.table.setItem(row, 1, name_item)
-        self.table.setItem(row, 2, QTableWidgetItem(CATEGORY_LABELS[component.category]))
+        self.table.setItem(row, MATERIAL_COLUMN, name_item)
+
+        percentage = QTableWidgetItem()
+        percentage.setData(Qt.ItemDataRole.UserRole, component.uid)
+        percentage.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        if component.category == MaterialCategory.AIR:
+            percentage.setText("—")
+            percentage.setFlags(percentage.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            percentage.setToolTip("El aire se mantiene en litros y no participa en el 100 % por masa.")
+        else:
+            value = self.state.percentage_values.get(component.uid, 0.0)
+            percentage.setText(QLocale().toString(value, "f", 3))
+            percentage.setData(QUANTITY_ROLE, value)
+            if not percentage_mode:
+                percentage.setFlags(percentage.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self.table.setItem(row, PERCENTAGE_COLUMN, percentage)
+        self.table.setItem(row, TYPE_COLUMN, QTableWidgetItem(CATEGORY_LABELS[component.category]))
 
         quantity = QTableWidgetItem(QLocale().toString(component.quantity, "f", 3))
         quantity.setData(Qt.ItemDataRole.UserRole, component.uid)
         quantity.setData(QUANTITY_ROLE, component.quantity)
         quantity.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        if relation_controlled:
+        if percentage_mode:
+            quantity.setFlags(quantity.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            quantity.setBackground(QColor("#e7eef6"))
+            quantity.setForeground(QColor("#60758a"))
+            quantity.setToolTip("Cantidad calculada a partir del porcentaje por masa.")
+        elif relation_controlled:
             tooltip = (
                 "Cantidad controlada automáticamente por una relación o dosificación activa."
             )
@@ -328,12 +460,12 @@ class WorkspacePage(QWidget):
             quantity.setBackground(QColor("#e7eef6"))
             quantity.setForeground(QColor("#60758a"))
             name_item.setToolTip(tooltip)
-        self.table.setItem(row, 3, quantity)
-        self.table.setItem(row, 4, QTableWidgetItem(component.unit))
+        self.table.setItem(row, QUANTITY_COLUMN, quantity)
+        self.table.setItem(row, UNIT_COLUMN, QTableWidgetItem(component.unit))
         self.table.setItem(
-            row, 5, QTableWidgetItem(f"{component.material.specific_gravity:.3f}")
+            row, SG_COLUMN, QTableWidgetItem(f"{component.material.specific_gravity:.3f}")
         )
-        self.table.setItem(row, 6, QTableWidgetItem(f"{component.absolute_volume_l:.3f}"))
+        self.table.setItem(row, VOLUME_COLUMN, QTableWidgetItem(f"{component.absolute_volume_l:.3f}"))
         ensure_table_row_height(self.table, row)
 
     def _populate_constraints(self) -> None:
@@ -345,6 +477,12 @@ class WorkspacePage(QWidget):
 
             active = QCheckBox()
             active.setChecked(constraint.enabled)
+            active.setEnabled(not self.state.percentage_mode)
+            active.setToolTip(
+                "Relación suspendida durante el cálculo por porcentaje."
+                if self.state.percentage_mode
+                else ""
+            )
             active.toggled.connect(
                 lambda checked, uid=constraint.uid, c=constraint: self.state.update_ratio_constraint(
                     uid, c.target_ratio, checked
@@ -368,6 +506,7 @@ class WorkspacePage(QWidget):
             target.setKeyboardTracking(False)
             target.setValue(constraint.target_ratio)
             target.setSuffix(TARGET_SUFFIXES[constraint.mode])
+            target.setEnabled(not self.state.percentage_mode)
             target.editingFinished.connect(
                 lambda uid=constraint.uid, a=active, widget=target: self.state.update_ratio_constraint(
                     uid, widget.value(), a.isChecked()
@@ -383,14 +522,18 @@ class WorkspacePage(QWidget):
             self.constraints_table.setItem(row, 5, actual_item)
 
             delete = QPushButton("Eliminar")
+            delete.setEnabled(not self.state.percentage_mode)
             delete.clicked.connect(
                 lambda _checked=False, uid=constraint.uid: self.state.remove_ratio_constraint(uid)
             )
+            common_height = max(target.sizeHint().height(), delete.sizeHint().height())
+            target.setFixedHeight(common_height)
+            delete.setFixedHeight(common_height)
             self.constraints_table.setCellWidget(row, 6, delete)
-            ensure_table_row_height(self.constraints_table, row)
+            ensure_table_row_height(self.constraints_table, row, vertical_padding=6)
 
     def _start_quantity_edit(self, row: int, column: int) -> None:
-        if column != 3:
+        if column not in (QUANTITY_COLUMN, PERCENTAGE_COLUMN):
             return
         item = self.table.item(row, column)
         if item is not None and item.flags() & Qt.ItemFlag.ItemIsEditable:
@@ -404,6 +547,34 @@ class WorkspacePage(QWidget):
             and abs(component.quantity - value) > 1e-9
         ):
             self.state.set_quantity(uid, value)
+
+    def _percentage_committed(self, uid: str, value: float) -> None:
+        if not self._refreshing and self.state.percentage_mode:
+            self.state.set_percentage(uid, value)
+
+    def _percentage_mode_changed(self, checked: bool) -> None:
+        if self._refreshing:
+            return
+        try:
+            self.state.set_percentage_mode(checked)
+        except ValueError as error:
+            self.percentage_check.blockSignals(True)
+            self.percentage_check.setChecked(False)
+            self.percentage_check.blockSignals(False)
+            QMessageBox.warning(self, "No se puede calcular por porcentaje", str(error))
+
+    def _open_inverse_calculator(self) -> None:
+        dialog = InverseMixCalculatorDialog(
+            self.state.materials,
+            [component.material for component in self.state.design.enabled_components()],
+            self,
+        )
+        if dialog.exec():
+            try:
+                self.state.replace_with_normalized_recipe(dialog.normalized_entries)
+                self.state.message.emit("La receta inversa normalizada se añadió al Laboratorio.")
+            except ValueError as error:
+                QMessageBox.warning(self, "No se pudo aplicar la receta", str(error))
 
     def _lock_changed(self, uid: str, button: QToolButton, checked: bool) -> None:
         button.setText("🔒" if checked else "🔓")

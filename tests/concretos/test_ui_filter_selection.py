@@ -89,7 +89,7 @@ def test_workspace_disables_only_active_relation_numerator(tmp_path, monkeypatch
     def quantity_item(uid: str):
         for row in range(page.table.rowCount()):
             if page.table.item(row, 1).data(Qt.ItemDataRole.UserRole) == uid:
-                return page.table.item(row, 3)
+                return page.table.item(row, 4)
         raise AssertionError("component row not found")
 
     assert not quantity_item(constraint.numerator_uid).flags() & Qt.ItemFlag.ItemIsEditable
@@ -99,7 +99,7 @@ def test_workspace_disables_only_active_relation_numerator(tmp_path, monkeypatch
         for row in range(page.table.rowCount())
         if page.table.item(row, 1).data(Qt.ItemDataRole.UserRole) == constraint.numerator_uid
     )
-    page._start_quantity_edit(controlled_row, 3)
+    page._start_quantity_edit(controlled_row, 4)
     app.processEvents()
     assert not page.table.findChildren(ExplicitFocusDoubleSpinBox)
 
@@ -128,8 +128,8 @@ def test_workspace_quantity_editor_is_temporary_and_commits_once(tmp_path, monke
     changes: list[None] = []
     state.design_changed.connect(lambda: changes.append(None))
 
-    assert page.table.cellWidget(row, 3) is None
-    page._start_quantity_edit(row, 3)
+    assert page.table.cellWidget(row, 4) is None
+    page._start_quantity_edit(row, 4)
     app.processEvents()
     editors = page.table.findChildren(ExplicitFocusDoubleSpinBox)
     assert len(editors) == 1
@@ -141,6 +141,6 @@ def test_workspace_quantity_editor_is_temporary_and_commits_once(tmp_path, monke
 
     assert state.design.component(uid).quantity == 222.0
     assert len(changes) == 1
-    assert page.table.cellWidget(row, 3) is None
+    assert page.table.cellWidget(row, 4) is None
     assert not page.table.findChildren(ExplicitFocusDoubleSpinBox)
     page.close()
