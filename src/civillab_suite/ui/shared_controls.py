@@ -3,10 +3,21 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QObject, Qt
-from PySide6.QtWidgets import QApplication, QComboBox, QProxyStyle, QStyle, QTableView, QWidget
+from PySide6.QtGui import QColor, QPalette, QWheelEvent
+from PySide6.QtWidgets import (
+    QAbstractScrollArea,
+    QApplication,
+    QComboBox,
+    QDoubleSpinBox,
+    QProxyStyle,
+    QSpinBox,
+    QStyle,
+    QTableView,
+    QTableWidget,
+    QWidget,
+)
 
 from civillab_suite.config import ASSETS_DIR
-
 
 SHARED_CONTROL_ASSETS_DIR = ASSETS_DIR / "shared"
 
@@ -25,6 +36,7 @@ class ComboBoxTuning(QObject):
 
     MAX_VISIBLE_ROWS = 8
     _REGISTERED_PROPERTY = "_civillab_shared_combo_tuned"
+    _LIGHT_ROOT_PROPERTY = "_civillab_light_surface_root"
 
     def register_descendants(self, root: QWidget) -> None:
         if isinstance(root, QComboBox):
@@ -45,7 +57,82 @@ class ComboBoxTuning(QObject):
     def eventFilter(self, watched, event) -> bool:  # noqa: N802
         if event.type() == QEvent.Type.Show and isinstance(watched, QWidget):
             self.register_descendants(watched)
+            if self._belongs_to_light_root(watched):
+                apply_light_surface_palette(watched)
         return super().eventFilter(watched, event)
+
+    def register_light_root(self, root: QWidget) -> None:
+        root.setProperty(self._LIGHT_ROOT_PROPERTY, True)
+
+    def _belongs_to_light_root(self, widget: QWidget) -> bool:
+        current: QWidget | None = widget
+        while current is not None:
+            if current.property(self._LIGHT_ROOT_PROPERTY):
+                return True
+            current = current.parentWidget()
+        return False
+
+
+class ExplicitFocusSpinBox(QSpinBox):
+    """Ignore wheel changes until the user has explicitly focused the editor."""
+
+    def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802
+        if not self.hasFocus():
+            event.ignore()
+            return
+        super().wheelEvent(event)
+
+
+class ExplicitFocusDoubleSpinBox(QDoubleSpinBox):
+    """Double spin box whose wheel follows explicit click/keyboard focus."""
+
+    def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802
+        if not self.hasFocus():
+            event.ignore()
+            return
+        super().wheelEvent(event)
+
+
+def apply_light_surface_palette(root: QWidget) -> None:
+    """Pin light-module surface roles without affecting the suite's dark shell."""
+
+    palette = QPalette(root.palette())
+    palette.setColor(QPalette.ColorRole.Window, QColor("#f4f7fb"))
+    palette.setColor(QPalette.ColorRole.Base, QColor("#ffffff"))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#f7f9fc"))
+    palette.setColor(QPalette.ColorRole.Text, QColor("#1f2937"))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor("#1f2937"))
+    palette.setColor(QPalette.ColorRole.Button, QColor("#e7eef6"))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor("#1f2937"))
+    root.setPalette(palette)
+
+    for area in root.findChildren(QAbstractScrollArea):
+        area.setPalette(palette)
+        area.viewport().setPalette(palette)
+        area.viewport().setAutoFillBackground(True)
+
+
+def ensure_table_row_height(
+    table: QTableWidget,
+    row: int,
+    *,
+    vertical_padding: int = 6,
+    minimum: int | None = None,
+) -> int:
+    """Fit one stable table row to its embedded widgets with modest padding."""
+
+    baseline = minimum or table.verticalHeader().defaultSectionSize()
+    widget_height = max(
+        (
+            widget.sizeHint().height()
+            for column in range(table.columnCount())
+            if (widget := table.cellWidget(row, column)) is not None
+        ),
+        default=0,
+    )
+    height = max(baseline, widget_height + vertical_padding)
+    table.setRowHeight(row, height)
+    return height
 
 
 def install_shared_control_tuning() -> ComboBoxTuning | None:
@@ -69,12 +156,16 @@ def install_shared_control_tuning() -> ComboBoxTuning | None:
     return tuning
 
 
-def tune_shared_controls(root: QWidget) -> None:
+def tune_shared_controls(root: QWidget, *, light_surfaces: bool = False) -> None:
     """Configure controls already present in a module window or dialog."""
 
     tuning = install_shared_control_tuning()
     if tuning is not None:
         tuning.register_descendants(root)
+    if light_surfaces:
+        if tuning is not None:
+            tuning.register_light_root(root)
+        apply_light_surface_palette(root)
 
 
 SHARED_CONTROLS_STYLESHEET = """
@@ -109,6 +200,20 @@ QPlainTextEdit, QTextEdit, QDateEdit, QTimeEdit, QDateTimeEdit {
     padding: 5px 7px;
     selection-background-color: #1769aa;
     selection-color: white;
+}
+QAbstractScrollArea {
+    background-color: white;
+}
+QAbstractScrollArea QWidget#qt_scrollarea_viewport {
+    background-color: white;
+}
+QScrollArea > QWidget > QWidget {
+    background-color: white;
+}
+QDoubleSpinBox[relationControlled="true"] {
+    background: #e7eef6;
+    color: #60758a;
+    border-color: #cbd6e2;
 }
 QLineEdit:hover, QDoubleSpinBox:hover, QComboBox:hover, QSpinBox:hover,
 QPlainTextEdit:hover, QTextEdit:hover, QDateEdit:hover, QTimeEdit:hover,

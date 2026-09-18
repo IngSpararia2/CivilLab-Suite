@@ -13,13 +13,16 @@ def create_window(
     if app is None:
         raise RuntimeError("CivilLab Suite debe crear QApplication antes de abrir Concretos.")
 
+    from civillab_suite.ui.shared_controls import (
+        install_shared_control_tuning,
+        tune_shared_controls,
+    )
     from concrete_mix_designer.config import DATABASE_PATH
     from concrete_mix_designer.data.database import MaterialRepository
     from concrete_mix_designer.data.laboratory_repository import LaboratoryRepository
     from concrete_mix_designer.services.app_state import AppState
     from concrete_mix_designer.ui.main_window import MainWindow
     from concrete_mix_designer.ui.styles import APP_STYLESHEET
-    from civillab_suite.ui.shared_controls import install_shared_control_tuning
 
     install_shared_control_tuning()
 
@@ -54,4 +57,5 @@ def create_window(
         shared_calendar_page=calendar_page,
     )
     window.setStyleSheet(APP_STYLESHEET)
+    tune_shared_controls(window, light_surfaces=True)
     return window

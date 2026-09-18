@@ -4,7 +4,8 @@ from contextlib import contextmanager
 from datetime import timedelta
 from typing import Iterator
 
-from sqlalchemy import create_engine, inspect as sqlalchemy_inspect, or_, select, text
+from sqlalchemy import create_engine, or_, select, text
+from sqlalchemy import inspect as sqlalchemy_inspect
 from sqlalchemy.orm import Session, joinedload, sessionmaker
 
 from .config import database_url
@@ -32,6 +33,16 @@ def get_session_factory():
             future=True,
         )
     return _SessionFactory
+
+
+def dispose_database_connections() -> None:
+    """Release pooled SQLite handles before a full-suite data replacement."""
+
+    global _engine, _SessionFactory
+    if _engine is not None:
+        _engine.dispose()
+    _engine = None
+    _SessionFactory = None
 
 
 @contextmanager

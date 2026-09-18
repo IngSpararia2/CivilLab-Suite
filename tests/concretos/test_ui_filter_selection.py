@@ -67,3 +67,34 @@ def test_filter_signals_preserve_selected_record_id(tmp_path, monkeypatch):
 
     library_page.close()
     production_page.close()
+
+
+def test_workspace_disables_only_active_relation_numerator(tmp_path, monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", os.environ.get("QT_QPA_PLATFORM", "offscreen"))
+
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication
+
+    from concrete_mix_designer.data.database import MaterialRepository
+    from concrete_mix_designer.services.app_state import AppState
+    from concrete_mix_designer.ui.pages.workspace_page import WorkspacePage
+
+    state = AppState(MaterialRepository(tmp_path / "workspace.sqlite3"))
+    constraint = state.design.ratio_constraints[0]
+    state.update_ratio_constraint(constraint.uid, constraint.target_ratio, True)
+    app = QApplication.instance() or QApplication([])
+    page = WorkspacePage(state)
+
+    def quantity_widget(uid: str):
+        for row in range(page.table.rowCount()):
+            if page.table.item(row, 1).data(Qt.ItemDataRole.UserRole) == uid:
+                return page.table.cellWidget(row, 3)
+        raise AssertionError("component row not found")
+
+    assert not quantity_widget(constraint.numerator_uid).isEnabled()
+    assert quantity_widget(constraint.denominator_uid).isEnabled()
+
+    state.update_ratio_constraint(constraint.uid, constraint.target_ratio, False)
+    app.processEvents()
+    assert quantity_widget(constraint.numerator_uid).isEnabled()
+    page.close()

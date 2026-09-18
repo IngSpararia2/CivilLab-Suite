@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from civillab_suite.ui.shared_controls import ensure_table_row_height
 from concrete_mix_designer.data.laboratory_repository import LaboratoryRepository
 from concrete_mix_designer.domain.laboratory_models import (
     CompressionResultRecord,
@@ -36,7 +37,6 @@ from concrete_mix_designer.domain.laboratory_models import (
     SpecimenType,
 )
 from concrete_mix_designer.services.unit_conversion import length_to_mm, mm_to_length
-
 
 DEFAULT_AGES = (1, 3, 7, 14, 28, 56)
 
@@ -98,6 +98,7 @@ class ScheduleTable(QWidget):
             count.setRange(0, 50)
             count.setValue(0)
             self.table.setCellWidget(row, column, count)
+        ensure_table_row_height(self.table, row)
         self.table.sortItems(0)
 
     def _add_custom_age(self) -> None:

@@ -1,6 +1,15 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QComboBox, QStyle, QWidget
+from PySide6.QtGui import QPalette
+from PySide6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QPushButton,
+    QScrollArea,
+    QStyle,
+    QTableWidget,
+    QWidget,
+)
 
 
 def test_shared_control_assets_and_concrete_stylesheet_are_stable():
@@ -18,7 +27,10 @@ def test_shared_control_assets_and_concrete_stylesheet_are_stable():
 
 
 def test_shared_combo_tuning_is_idempotent_and_handles_late_combos(qapp):
-    from civillab_suite.ui.shared_controls import install_shared_control_tuning, tune_shared_controls
+    from civillab_suite.ui.shared_controls import (
+        install_shared_control_tuning,
+        tune_shared_controls,
+    )
 
     first = install_shared_control_tuning()
     second = install_shared_control_tuning()
@@ -39,3 +51,54 @@ def test_shared_combo_tuning_is_idempotent_and_handles_late_combos(qapp):
     assert combo.view().horizontalScrollBarPolicy().name == "ScrollBarAlwaysOff"
 
     root.close()
+
+
+def test_light_palette_and_embedded_widget_row_height_are_explicit(qapp):
+    from civillab_suite.ui.shared_controls import (
+        apply_light_surface_palette,
+        ensure_table_row_height,
+    )
+
+    root = QWidget()
+    apply_light_surface_palette(root)
+    assert root.palette().color(QPalette.ColorRole.Base).name() == "#ffffff"
+
+    table = QTableWidget(1, 1)
+    button = QPushButton("Acción")
+    table.setCellWidget(0, 0, button)
+    height = ensure_table_row_height(table, 0, vertical_padding=8)
+    assert height >= button.sizeHint().height() + 8
+    assert table.rowHeight(0) == height
+
+
+def test_late_dialog_inherits_registered_light_surface_palette(qapp):
+    from civillab_suite.ui.shared_controls import tune_shared_controls
+
+    root = QWidget()
+    tune_shared_controls(root, light_surfaces=True)
+    dialog = QDialog(root)
+    area = QScrollArea(dialog)
+    dialog.show()
+    qapp.processEvents()
+
+    assert dialog.palette().color(QPalette.ColorRole.Base).name() == "#ffffff"
+    assert area.viewport().palette().color(QPalette.ColorRole.Base).name() == "#ffffff"
+    dialog.close()
+
+
+def test_spinbox_without_focus_ignores_wheel(qapp):
+    from civillab_suite.ui.shared_controls import ExplicitFocusDoubleSpinBox
+
+    class WheelStub:
+        ignored = False
+
+        def ignore(self):
+            self.ignored = True
+
+    spin = ExplicitFocusDoubleSpinBox()
+    spin.setValue(5.0)
+    event = WheelStub()
+    spin.wheelEvent(event)
+
+    assert event.ignored
+    assert spin.value() == 5.0

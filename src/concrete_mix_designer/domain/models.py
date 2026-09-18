@@ -178,6 +178,16 @@ class MixDesign:
         return next((component for component in self.components if component.uid == uid), None)
 
     @property
+    def relation_controlled_uids(self) -> set[str]:
+        """Components whose manual quantity is governed by an active relation."""
+
+        return {
+            constraint.numerator_uid
+            for constraint in self.ratio_constraints
+            if constraint.enabled
+        }
+
+    @property
     def total_absolute_volume_l(self) -> float:
         return sum(component.absolute_volume_l for component in self.enabled_components())
 

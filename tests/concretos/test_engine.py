@@ -313,6 +313,18 @@ def test_constraints_survive_json_roundtrip():
     assert restored.ratio_constraints[1].target_ratio == 1.0
 
 
+def test_relation_controlled_uids_are_derived_only_from_active_numerators():
+    design = build_design()
+    first, second = design.ratio_constraints
+    second.enabled = False
+
+    assert design.relation_controlled_uids == {first.numerator_uid}
+    assert first.denominator_uid not in design.relation_controlled_uids
+
+    first.enabled = False
+    assert design.relation_controlled_uids == set()
+
+
 def test_legacy_unused_batch_volume_is_ignored_when_loading_design_json():
     payload = build_design().to_dict()
     payload["parameters"]["batch_volume_m3"] = 6.5

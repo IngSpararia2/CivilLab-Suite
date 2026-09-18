@@ -15,19 +15,22 @@ def create_window(
         raise RuntimeError("CivilLab Suite debe crear QApplication antes de abrir Prefabricados.")
 
     prepare_prefabricados_data()
+    from civillab_suite.ui.shared_controls import (
+        install_shared_control_tuning,
+        tune_shared_controls,
+    )
     from precon_lab.database import initialize_database
     from precon_lab.ui.main_window import MainWindow
     from precon_lab.ui.styles import APP_STYLESHEET
-    from civillab_suite.ui.shared_controls import install_shared_control_tuning
 
     initialize_database()
     install_shared_control_tuning()
     catalog_page = pie_page = calendar_page = None
     if suite_context is not None:
-        from precon_lab.config import database_path
         from civillab_suite.ui.calendar_page import SharedCalendarPage
         from civillab_suite.ui.catalog_page import AssayCatalogPage
         from civillab_suite.ui.pie_page import SharedPiePage
+        from precon_lab.config import database_path
 
         suite_context.pie.import_prefabricados_legacy(database_path())
         catalog_page = AssayCatalogPage(suite_context.catalog, "prefabricados")
@@ -50,4 +53,5 @@ def create_window(
         shared_calendar_page=calendar_page,
     )
     window.setStyleSheet(APP_STYLESHEET)
+    tune_shared_controls(window, light_surfaces=True)
     return window

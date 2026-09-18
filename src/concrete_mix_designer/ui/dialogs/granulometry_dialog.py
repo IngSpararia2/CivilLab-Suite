@@ -16,9 +16,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from civillab_suite.ui.shared_controls import ensure_table_row_height
 from concrete_mix_designer.domain.metadata_models import GradationPoint
 from concrete_mix_designer.domain.models import MaterialCategory
-
 
 FINE_SIEVES = [
     ("3/8 in", 9.50),
@@ -154,6 +154,7 @@ class GranulometryDialog(QDialog):
         passing.setSpecialValueText("—")
         passing.setValue(-1.0 if passing_pct is None else float(passing_pct))
         self.table.setCellWidget(row, 2, passing)
+        ensure_table_row_height(self.table, row)
         self._sort_rows()
 
     def _sort_rows(self) -> None:

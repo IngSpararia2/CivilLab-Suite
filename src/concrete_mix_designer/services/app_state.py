@@ -75,20 +75,65 @@ class AppState(QObject):
     def productions(self) -> list[ProductionRecord]:
         return self.laboratory_repository.list_productions()
 
-    def _material_by_name(self, name: str) -> Material:
-        material = next((item for item in self.materials if item.name == name), None)
-        if material is None:
-            raise RuntimeError(f"No se encontró el material inicial: {name}")
-        return material
-
     def _build_default_design(self) -> MixDesign:
-        water = MixComponent(self._material_by_name("Agua"), 185.0, locked=True)
-        cement = MixComponent(self._material_by_name("Cemento Portland Tipo I"), 296.0)
-        fly_ash = MixComponent(self._material_by_name("Ceniza volante"), 74.0)
-        sand = MixComponent(self._material_by_name("Arena estándar"), 700.0)
-        gravel = MixComponent(self._material_by_name("Grava estándar"), 1050.0)
-        superplasticizer = MixComponent(self._material_by_name("Superplastificante"), 0.0)
-        air = MixComponent(self._material_by_name("Aire"), 20.0, locked=True)
+        materials = self.materials
+        used_ids: set[int] = set()
+
+        def take_material(name: str, category: MaterialCategory) -> Material | None:
+            candidates = [
+                material
+                for material in materials
+                if material.category == category and material.id not in used_ids
+            ]
+            exact = next(
+                (material for material in candidates if material.name.casefold() == name.casefold()),
+                None,
+            )
+            selected = exact or min(
+                candidates,
+                key=lambda material: (
+                    not material.is_seed,
+                    material.id if material.id is not None else 2**63,
+                    material.name.casefold(),
+                ),
+                default=None,
+            )
+            if selected is not None and selected.id is not None:
+                used_ids.add(selected.id)
+            return selected
+
+        component_specs = (
+            ("Agua", MaterialCategory.WATER, 185.0, True),
+            ("Cemento Portland Tipo I", MaterialCategory.CEMENTITIOUS, 296.0, False),
+            ("Ceniza volante", MaterialCategory.CEMENTITIOUS, 74.0, False),
+            ("Arena estándar", MaterialCategory.FINE_AGGREGATE, 700.0, False),
+            ("Grava estándar", MaterialCategory.COARSE_AGGREGATE, 1050.0, False),
+            ("Superplastificante", MaterialCategory.ADMIXTURE, 0.0, False),
+            ("Aire", MaterialCategory.AIR, 20.0, True),
+        )
+        components: list[MixComponent] = []
+        resolved: dict[str, MixComponent] = {}
+        for name, category, quantity, locked in component_specs:
+            material = take_material(name, category)
+            if material is None:
+                continue
+            component = MixComponent(material, quantity, locked=locked)
+            components.append(component)
+            resolved[name] = component
+
+        constraints: list[RatioConstraint] = []
+        cement = resolved.get("Cemento Portland Tipo I")
+        fly_ash = resolved.get("Ceniza volante")
+        if cement is not None and fly_ash is not None:
+            constraints.append(
+                RatioConstraint(
+                    numerator_uid=cement.uid,
+                    denominator_uid=fly_ash.uid,
+                    target_ratio=80.0,
+                    mode=ConstraintMode.PERCENT_OF_PAIR,
+                    enabled=False,
+                )
+            )
 
         return MixDesign(
             parameters=MixParameters(
@@ -99,16 +144,8 @@ class AppState(QObject):
                 w_cm_locked=True,
                 target_volume_l=1000.0,
             ),
-            components=[water, cement, fly_ash, sand, gravel, superplasticizer, air],
-            ratio_constraints=[
-                RatioConstraint(
-                    numerator_uid=cement.uid,
-                    denominator_uid=fly_ash.uid,
-                    target_ratio=80.0,
-                    mode=ConstraintMode.PERCENT_OF_PAIR,
-                    enabled=False,
-                ),
-            ],
+            components=components,
+            ratio_constraints=constraints,
         )
 
     def reset_design(self) -> None:

@@ -61,3 +61,41 @@ def test_material_repository_rejects_update_of_missing_material(tmp_path):
 
     with pytest.raises(ValueError, match="no existe"):
         repository.save(material)
+
+
+def test_app_state_uses_renamed_seed_material_in_default_design(tmp_path):
+    from concrete_mix_designer.services.app_state import AppState
+
+    repository = MaterialRepository(tmp_path / "renamed-seed.sqlite3")
+    cement = next(
+        material
+        for material in repository.list_all()
+        if material.name == "Cemento Portland Tipo I"
+    )
+    cement.name = "Cemento de la planta"
+    cement.specific_gravity = 3.08
+    repository.save(cement)
+
+    state = AppState(repository)
+    restored_component = next(
+        component for component in state.design.components if component.material.id == cement.id
+    )
+
+    assert restored_component.material.name == "Cemento de la planta"
+    assert restored_component.material.specific_gravity == 3.08
+    assert state.design.ratio_constraints[0].numerator_uid == restored_component.uid
+
+
+def test_app_state_opens_when_an_entire_default_category_was_reclassified(tmp_path):
+    from concrete_mix_designer.services.app_state import AppState
+
+    repository = MaterialRepository(tmp_path / "missing-category.sqlite3")
+    for material in repository.list_all():
+        if material.category == MaterialCategory.CEMENTITIOUS:
+            material.category = MaterialCategory.OTHER
+            repository.save(material)
+
+    state = AppState(repository)
+
+    assert not state.design.by_category(MaterialCategory.CEMENTITIOUS)
+    assert state.design.ratio_constraints == []

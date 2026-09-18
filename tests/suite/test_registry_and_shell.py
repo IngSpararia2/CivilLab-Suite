@@ -28,5 +28,7 @@ def test_shell_renders_three_official_logos_and_disables_suelos(qapp):
     assert window.cards["prefabricados"].open_button.isEnabled()
     assert not window.cards["suelos"].open_button.isEnabled()
     assert window.cards["suelos"].status_label.text() == "PRÓXIMAMENTE"
+    assert window.export_data_action.text() == "Exportar Datos Generales…"
+    assert window.import_data_action.text() == "Importar Datos Generales…"
 
     window.close()

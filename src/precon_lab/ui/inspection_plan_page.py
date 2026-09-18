@@ -10,8 +10,8 @@ from PySide6.QtWidgets import (
     QDateEdit,
     QDialog,
     QDialogButtonBox,
-    QFrame,
     QFormLayout,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -22,15 +22,17 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
-    QToolButton,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from ..database import session_scope
+from civillab_suite.ui.shared_controls import ensure_table_row_height
+
 from ..config import ASSETS_DIR
+from ..database import session_scope
 from ..services import (
     ValidationError,
     create_inspection_plan_entry,
@@ -208,7 +210,7 @@ class CatalogDialog(QDialog):
             cell_layout.setContentsMargins(0, 0, 0, 0)
             cell_layout.addWidget(action, alignment=Qt.AlignmentFlag.AlignCenter)
             self.table.setCellWidget(row, 8, cell)
-            self.table.setRowHeight(row, 34)
+            ensure_table_row_height(self.table, row, minimum=34)
         finalize_table_columns(self.table)
 
     def _show_procedure(self, applicability, button: QToolButton) -> None:
@@ -526,5 +528,5 @@ class InspectionPlanPage(QWidget):
                 self._show_requirements(material_id, test_id)
             )
             self.table.setCellWidget(row, 5, button)
-            self.table.setRowHeight(row, max(34, button.sizeHint().height() + 4))
+            ensure_table_row_height(self.table, row, minimum=34)
         finalize_table_columns(self.table)

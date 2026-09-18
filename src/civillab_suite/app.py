@@ -44,6 +44,8 @@ class SuiteController(QObject):
         self.database = database
         self.shell = SuiteWindow(registry)
         self.shell.module_requested.connect(self.open_module)
+        self.shell.prepare_for_data_import.connect(self.prepare_for_data_import)
+        self.shell.restart_required.connect(QApplication.instance().quit)
         self.module_windows: dict[str, QMainWindow] = {}
         self.active_module_id: str | None = None
         self.context: SuiteContext = build_suite_context(
@@ -99,6 +101,18 @@ class SuiteController(QObject):
         self.shell.showMaximized()
         self.shell.raise_()
         self.shell.activateWindow()
+
+    def prepare_for_data_import(self) -> None:
+        """Drop module windows and pooled handles before replacing data files."""
+
+        for window in self.module_windows.values():
+            window.close()
+            window.deleteLater()
+        self.module_windows.clear()
+        self.active_module_id = None
+        from precon_lab.database import dispose_database_connections
+
+        dispose_database_connections()
 
 
 def create_application(argv: list[str] | None = None) -> QApplication:

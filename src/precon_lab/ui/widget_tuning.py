@@ -105,5 +105,5 @@ def finalize_table_columns(table: QTableView) -> None:
 def tune_widget_tree(root: QWidget) -> None:
     """Aplica la ergonomía compartida también a diálogos creados dinámicamente."""
 
-    tune_shared_controls(root)
+    tune_shared_controls(root, light_surfaces=True)
     tune_table_headers(root)

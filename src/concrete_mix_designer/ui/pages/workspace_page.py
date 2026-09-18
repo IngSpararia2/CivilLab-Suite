@@ -6,7 +6,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QDoubleSpinBox,
     QFrame,
     QHBoxLayout,
     QHeaderView,
@@ -22,6 +21,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from civillab_suite.ui.shared_controls import (
+    ExplicitFocusDoubleSpinBox,
+    ensure_table_row_height,
+)
 from concrete_mix_designer.domain.models import CATEGORY_LABELS, ConstraintMode, MaterialCategory
 from concrete_mix_designer.services.app_state import AppState
 from concrete_mix_designer.ui.dialogs.ratio_constraint_dialog import (
@@ -29,7 +32,6 @@ from concrete_mix_designer.ui.dialogs.ratio_constraint_dialog import (
     RatioConstraintDialog,
 )
 from concrete_mix_designer.ui.widgets.volume_stack import VolumeStackWidget
-
 
 TARGET_SUFFIXES = {
     ConstraintMode.MASS_RATIO: " A/B",
@@ -78,7 +80,7 @@ class WorkspacePage(QWidget):
         mode_row.addWidget(self.pending_label)
         mode_row.addStretch()
 
-        self.ratio_spin = QDoubleSpinBox()
+        self.ratio_spin = ExplicitFocusDoubleSpinBox()
         self.ratio_spin.setRange(0.10, 1.50)
         self.ratio_spin.setDecimals(3)
         self.ratio_spin.setSingleStep(0.005)
@@ -133,6 +135,7 @@ class WorkspacePage(QWidget):
             ["Activa", "Material A", "Tipo", "Base B", "Objetivo", "Valor actual", "Eliminar"]
         )
         self.constraints_table.verticalHeader().setVisible(False)
+        self.constraints_table.verticalHeader().setDefaultSectionSize(36)
         self.constraints_table.setAlternatingRowColors(True)
         constraints_header = self.constraints_table.horizontalHeader()
         constraints_header.setSectionResizeMode(1, QHeaderView.Stretch)
@@ -253,6 +256,7 @@ class WorkspacePage(QWidget):
             self._refreshing = False
 
     def _populate_row(self, row: int, component) -> None:
+        relation_controlled = component.uid in self.state.design.relation_controlled_uids
         lock_button = QToolButton()
         lock_button.setCheckable(True)
         lock_button.setChecked(component.locked)
@@ -266,12 +270,19 @@ class WorkspacePage(QWidget):
         self.table.setItem(row, 1, name_item)
         self.table.setItem(row, 2, QTableWidgetItem(CATEGORY_LABELS[component.category]))
 
-        quantity = QDoubleSpinBox()
+        quantity = ExplicitFocusDoubleSpinBox()
         quantity.setRange(0.0, 10000.0)
         quantity.setDecimals(3)
         quantity.setSingleStep(1.0)
         quantity.setKeyboardTracking(False)
         quantity.setValue(component.quantity)
+        quantity.setProperty("relationControlled", relation_controlled)
+        quantity.setEnabled(not relation_controlled)
+        if relation_controlled:
+            quantity.setToolTip(
+                "Cantidad controlada automáticamente por una relación o dosificación activa."
+            )
+            name_item.setToolTip(quantity.toolTip())
         quantity.editingFinished.connect(
             partial(self._quantity_finished, component.uid, quantity)
         )
@@ -281,6 +292,7 @@ class WorkspacePage(QWidget):
             row, 5, QTableWidgetItem(f"{component.material.specific_gravity:.3f}")
         )
         self.table.setItem(row, 6, QTableWidgetItem(f"{component.absolute_volume_l:.3f}"))
+        ensure_table_row_height(self.table, row)
 
     def _populate_constraints(self) -> None:
         constraints = self.state.design.ratio_constraints
@@ -308,7 +320,7 @@ class WorkspacePage(QWidget):
             base_name = denominator.material.name if denominator else "Cementante total"
             self.constraints_table.setItem(row, 3, QTableWidgetItem(base_name))
 
-            target = QDoubleSpinBox()
+            target = ExplicitFocusDoubleSpinBox()
             target.setRange(0.0, 100000.0)
             target.setDecimals(6)
             target.setKeyboardTracking(False)
@@ -333,8 +345,9 @@ class WorkspacePage(QWidget):
                 lambda _checked=False, uid=constraint.uid: self.state.remove_ratio_constraint(uid)
             )
             self.constraints_table.setCellWidget(row, 6, delete)
+            ensure_table_row_height(self.constraints_table, row)
 
-    def _quantity_finished(self, uid: str, widget: QDoubleSpinBox) -> None:
+    def _quantity_finished(self, uid: str, widget: ExplicitFocusDoubleSpinBox) -> None:
         if not self._refreshing:
             self.state.set_quantity(uid, widget.value())
 
