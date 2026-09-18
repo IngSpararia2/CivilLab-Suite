@@ -1,5 +1,7 @@
-from civillab_suite.ui.shared_controls import SHARED_CONTROLS_STYLESHEET
-
+from civillab_suite.ui.shared_controls import (
+    SHARED_BUTTON_CONTRAST_STYLESHEET,
+    SHARED_CONTROLS_STYLESHEET,
+)
 
 APP_STYLESHEET = SHARED_CONTROLS_STYLESHEET + """
 QMainWindow, QDialog {
@@ -351,4 +353,4 @@ QLabel#CopyrightCredit {
     padding: 3px 10px;
     margin: 2px 4px;
 }
-"""
+""" + SHARED_BUTTON_CONTRAST_STYLESHEET

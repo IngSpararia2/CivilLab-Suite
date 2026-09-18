@@ -75,6 +75,7 @@ def test_workspace_disables_only_active_relation_numerator(tmp_path, monkeypatch
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QApplication
 
+    from civillab_suite.ui.shared_controls import ExplicitFocusDoubleSpinBox
     from concrete_mix_designer.data.database import MaterialRepository
     from concrete_mix_designer.services.app_state import AppState
     from concrete_mix_designer.ui.pages.workspace_page import WorkspacePage
@@ -85,16 +86,61 @@ def test_workspace_disables_only_active_relation_numerator(tmp_path, monkeypatch
     app = QApplication.instance() or QApplication([])
     page = WorkspacePage(state)
 
-    def quantity_widget(uid: str):
+    def quantity_item(uid: str):
         for row in range(page.table.rowCount()):
             if page.table.item(row, 1).data(Qt.ItemDataRole.UserRole) == uid:
-                return page.table.cellWidget(row, 3)
+                return page.table.item(row, 3)
         raise AssertionError("component row not found")
 
-    assert not quantity_widget(constraint.numerator_uid).isEnabled()
-    assert quantity_widget(constraint.denominator_uid).isEnabled()
+    assert not quantity_item(constraint.numerator_uid).flags() & Qt.ItemFlag.ItemIsEditable
+    assert quantity_item(constraint.denominator_uid).flags() & Qt.ItemFlag.ItemIsEditable
+    controlled_row = next(
+        row
+        for row in range(page.table.rowCount())
+        if page.table.item(row, 1).data(Qt.ItemDataRole.UserRole) == constraint.numerator_uid
+    )
+    page._start_quantity_edit(controlled_row, 3)
+    app.processEvents()
+    assert not page.table.findChildren(ExplicitFocusDoubleSpinBox)
 
     state.update_ratio_constraint(constraint.uid, constraint.target_ratio, False)
     app.processEvents()
-    assert quantity_widget(constraint.numerator_uid).isEnabled()
+    assert quantity_item(constraint.numerator_uid).flags() & Qt.ItemFlag.ItemIsEditable
+    page.close()
+
+
+def test_workspace_quantity_editor_is_temporary_and_commits_once(tmp_path, monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", os.environ.get("QT_QPA_PLATFORM", "offscreen"))
+
+    from PySide6.QtCore import QEvent, Qt
+    from PySide6.QtWidgets import QApplication
+
+    from civillab_suite.ui.shared_controls import ExplicitFocusDoubleSpinBox
+    from concrete_mix_designer.data.database import MaterialRepository
+    from concrete_mix_designer.services.app_state import AppState
+    from concrete_mix_designer.ui.pages.workspace_page import WorkspacePage
+
+    state = AppState(MaterialRepository(tmp_path / "delegate.sqlite3"))
+    app = QApplication.instance() or QApplication([])
+    page = WorkspacePage(state)
+    row = 0
+    uid = page.table.item(row, 1).data(Qt.ItemDataRole.UserRole)
+    changes: list[None] = []
+    state.design_changed.connect(lambda: changes.append(None))
+
+    assert page.table.cellWidget(row, 3) is None
+    page._start_quantity_edit(row, 3)
+    app.processEvents()
+    editors = page.table.findChildren(ExplicitFocusDoubleSpinBox)
+    assert len(editors) == 1
+
+    editors[0].setValue(222.0)
+    editors[0].editingFinished.emit()
+    app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+
+    assert state.design.component(uid).quantity == 222.0
+    assert len(changes) == 1
+    assert page.table.cellWidget(row, 3) is None
+    assert not page.table.findChildren(ExplicitFocusDoubleSpinBox)
     page.close()

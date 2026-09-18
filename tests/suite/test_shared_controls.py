@@ -14,16 +14,29 @@ from PySide6.QtWidgets import (
 
 def test_shared_control_assets_and_concrete_stylesheet_are_stable():
     from civillab_suite.ui.shared_controls import (
+        SHARED_BUTTON_CONTRAST_STYLESHEET,
         SHARED_CONTROL_ASSETS_DIR,
         SHARED_CONTROLS_STYLESHEET,
     )
     from concrete_mix_designer.ui.styles import APP_STYLESHEET
+    from precon_lab.ui.styles import APP_STYLESHEET as PRECON_APP_STYLESHEET
 
-    for name in ("chevron_down.svg", "chevron_up.svg", "chevron_left.svg", "chevron_right.svg"):
+    for name in (
+        "check.svg",
+        "chevron_down.svg",
+        "chevron_up.svg",
+        "chevron_left.svg",
+        "chevron_right.svg",
+    ):
         assert (SHARED_CONTROL_ASSETS_DIR / name).is_file()
     assert "assets/chevron_" not in APP_STYLESHEET
     assert "checkmark_blue.svg" not in APP_STYLESHEET
     assert SHARED_CONTROL_ASSETS_DIR.as_posix() in SHARED_CONTROLS_STYLESHEET
+    assert "QCheckBox::indicator:checked" in SHARED_CONTROLS_STYLESHEET
+    assert "width: 17px" in SHARED_CONTROLS_STYLESHEET
+    assert "QPushButton#Danger" in SHARED_BUTTON_CONTRAST_STYLESHEET
+    assert APP_STYLESHEET.endswith(SHARED_BUTTON_CONTRAST_STYLESHEET)
+    assert PRECON_APP_STYLESHEET.endswith(SHARED_BUTTON_CONTRAST_STYLESHEET)
 
 
 def test_shared_combo_tuning_is_idempotent_and_handles_late_combos(qapp):
@@ -102,3 +115,25 @@ def test_spinbox_without_focus_ignores_wheel(qapp):
 
     assert event.ignored
     assert spin.value() == 5.0
+
+
+def test_module_button_contrast_survives_generic_widget_color(qapp):
+    from concrete_mix_designer.ui.styles import APP_STYLESHEET
+
+    root = QWidget()
+    root.setStyleSheet(APP_STYLESHEET)
+    primary = QPushButton("Primario", root)
+    danger = QPushButton("Peligro", root)
+    danger.setObjectName("Danger")
+    secondary = QPushButton("Secundario", root)
+    secondary.setObjectName("Secondary")
+    table_action = QPushButton("Acción", root)
+    table_action.setObjectName("TableAction")
+    root.show()
+    qapp.processEvents()
+
+    assert primary.palette().color(QPalette.ColorRole.ButtonText).name() == "#ffffff"
+    assert danger.palette().color(QPalette.ColorRole.ButtonText).name() == "#ffffff"
+    assert secondary.palette().color(QPalette.ColorRole.ButtonText).name() == "#24415e"
+    assert table_action.palette().color(QPalette.ColorRole.ButtonText).name() == "#24415e"
+    root.close()

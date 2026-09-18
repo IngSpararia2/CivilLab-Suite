@@ -273,5 +273,46 @@ QCalendarWidget QToolButton#qt_calendar_prevmonth { image: url("__ASSETS__/chevr
 QCalendarWidget QToolButton#qt_calendar_nextmonth { image: url("__ASSETS__/chevron_right.svg"); }
 QCalendarWidget QToolButton#qt_calendar_monthbutton, QCalendarWidget QToolButton#qt_calendar_yearbutton { color: #12355b; background: transparent; border: none; font-weight: 700; }
 
-QCheckBox { spacing: 7px; }
+QCheckBox { color: #1f2937; spacing: 7px; }
+QCheckBox::indicator {
+    width: 17px;
+    height: 17px;
+    background: #ffffff;
+    border: 1px solid #7891a8;
+    border-radius: 4px;
+}
+QCheckBox::indicator:hover { background: #eef5fc; border-color: #1769aa; }
+QCheckBox::indicator:checked {
+    background: #1769aa;
+    border-color: #1769aa;
+    image: url("__ASSETS__/check.svg");
+}
+QCheckBox::indicator:checked:hover { background: #12588f; border-color: #12588f; }
+QCheckBox:disabled { color: #74879a; }
+QCheckBox::indicator:disabled { background: #edf1f5; border-color: #b7c4d0; }
+QCheckBox::indicator:checked:disabled {
+    background: #8ca6bc;
+    border-color: #8ca6bc;
+    image: url("__ASSETS__/check.svg");
+}
 """.replace("__ASSETS__", SHARED_CONTROL_ASSETS_DIR.as_posix())
+
+
+# Module styles intentionally set a neutral text color on QWidget after the
+# shared stylesheet. Reassert button contrast after those broad rules without
+# changing buttons that are deliberately light or navigation-specific.
+SHARED_BUTTON_CONTRAST_STYLESHEET = """
+QPushButton { color: #ffffff; }
+QPushButton:hover, QPushButton:pressed { color: #ffffff; }
+QPushButton:disabled { color: #eef3f7; }
+QPushButton#Danger, QPushButton#Danger:hover, QPushButton#Danger:pressed { color: #ffffff; }
+QPushButton#Secondary, QPushButton#Secondary:hover, QPushButton#Secondary:pressed {
+    color: #24415e;
+}
+QPushButton#Secondary:disabled { color: #94a2b0; }
+QPushButton#TableAction, QPushButton#TableAction:hover, QPushButton#TableAction:pressed {
+    color: #24415e;
+}
+QPushButton#SidebarNavButton { color: #e4edf5; }
+QPushButton#SidebarNavButton:checked { color: #102f4f; }
+"""

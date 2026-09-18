@@ -1,6 +1,7 @@
 """Sistema visual compartido por toda la interfaz de Prefabricados Lab."""
 
 from civillab_suite.ui.shared_controls import (
+    SHARED_BUTTON_CONTRAST_STYLESHEET,
     SHARED_CONTROL_ASSETS_DIR,
     SHARED_CONTROLS_STYLESHEET,
 )
@@ -348,4 +349,4 @@ QScrollBar::add-line:horizontal {
 }
 QScrollBar::add-line:hover, QScrollBar::sub-line:hover { background: #cbd9e6; }
 QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
-""".replace("__ASSETS__", SHARED_CONTROL_ASSETS_DIR.as_posix())
+""".replace("__ASSETS__", SHARED_CONTROL_ASSETS_DIR.as_posix()) + SHARED_BUTTON_CONTRAST_STYLESHEET

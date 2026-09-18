@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from functools import partial
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QLocale, Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QAbstractItemDelegate,
+    QAbstractItemView,
     QCheckBox,
     QComboBox,
     QFrame,
@@ -14,6 +17,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QSplitter,
+    QStyledItemDelegate,
     QTableWidget,
     QTableWidgetItem,
     QToolButton,
@@ -41,6 +45,42 @@ TARGET_SUFFIXES = {
     ConstraintMode.ML_PER_100KG_B: " mL/100 kg",
     ConstraintMode.ML_PER_100KG_CEMENTITIOUS: " mL/100 kg",
 }
+QUANTITY_ROLE = Qt.ItemDataRole.UserRole + 1
+
+
+class QuantityDelegate(QStyledItemDelegate):
+    """Create a numeric editor only while a quantity cell is being edited."""
+
+    quantity_committed = Signal(str, float)
+
+    def createEditor(self, parent, option, index):  # noqa: N802
+        editor = ExplicitFocusDoubleSpinBox(parent)
+        editor.setRange(0.0, 10000.0)
+        editor.setDecimals(3)
+        editor.setSingleStep(1.0)
+        editor.setKeyboardTracking(False)
+        editor.editingFinished.connect(lambda: self._finish_editor(editor))
+        return editor
+
+    def setEditorData(self, editor, index):  # noqa: N802
+        editor.setProperty("_civillab_quantity_committed", False)
+        editor.setValue(float(index.data(QUANTITY_ROLE) or 0.0))
+
+    def setModelData(self, editor, model, index):  # noqa: N802
+        if editor.property("_civillab_quantity_committed"):
+            return
+        editor.setProperty("_civillab_quantity_committed", True)
+        value = float(editor.value())
+        model.setData(index, QLocale().toString(value, "f", 3), Qt.DisplayRole)
+        model.setData(index, value, QUANTITY_ROLE)
+        uid = index.data(Qt.ItemDataRole.UserRole)
+        if uid is not None:
+            self.quantity_committed.emit(str(uid), value)
+
+    def _finish_editor(self, editor: ExplicitFocusDoubleSpinBox) -> None:
+        self.commitData.emit(editor)
+        self.closeEditor.emit(editor, QAbstractItemDelegate.EndEditHint.NoHint)
+        editor.deleteLater()
 
 
 class WorkspacePage(QWidget):
@@ -105,6 +145,11 @@ class WorkspacePage(QWidget):
         self.table.verticalHeader().setDefaultSectionSize(36)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.quantity_delegate = QuantityDelegate(self.table)
+        self.quantity_delegate.quantity_committed.connect(self._quantity_committed)
+        self.table.setItemDelegateForColumn(3, self.quantity_delegate)
+        self.table.cellClicked.connect(self._start_quantity_edit)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(1, QHeaderView.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
@@ -270,23 +315,20 @@ class WorkspacePage(QWidget):
         self.table.setItem(row, 1, name_item)
         self.table.setItem(row, 2, QTableWidgetItem(CATEGORY_LABELS[component.category]))
 
-        quantity = ExplicitFocusDoubleSpinBox()
-        quantity.setRange(0.0, 10000.0)
-        quantity.setDecimals(3)
-        quantity.setSingleStep(1.0)
-        quantity.setKeyboardTracking(False)
-        quantity.setValue(component.quantity)
-        quantity.setProperty("relationControlled", relation_controlled)
-        quantity.setEnabled(not relation_controlled)
+        quantity = QTableWidgetItem(QLocale().toString(component.quantity, "f", 3))
+        quantity.setData(Qt.ItemDataRole.UserRole, component.uid)
+        quantity.setData(QUANTITY_ROLE, component.quantity)
+        quantity.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         if relation_controlled:
-            quantity.setToolTip(
+            tooltip = (
                 "Cantidad controlada automáticamente por una relación o dosificación activa."
             )
-            name_item.setToolTip(quantity.toolTip())
-        quantity.editingFinished.connect(
-            partial(self._quantity_finished, component.uid, quantity)
-        )
-        self.table.setCellWidget(row, 3, quantity)
+            quantity.setToolTip(tooltip)
+            quantity.setFlags(quantity.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            quantity.setBackground(QColor("#e7eef6"))
+            quantity.setForeground(QColor("#60758a"))
+            name_item.setToolTip(tooltip)
+        self.table.setItem(row, 3, quantity)
         self.table.setItem(row, 4, QTableWidgetItem(component.unit))
         self.table.setItem(
             row, 5, QTableWidgetItem(f"{component.material.specific_gravity:.3f}")
@@ -347,9 +389,21 @@ class WorkspacePage(QWidget):
             self.constraints_table.setCellWidget(row, 6, delete)
             ensure_table_row_height(self.constraints_table, row)
 
-    def _quantity_finished(self, uid: str, widget: ExplicitFocusDoubleSpinBox) -> None:
-        if not self._refreshing:
-            self.state.set_quantity(uid, widget.value())
+    def _start_quantity_edit(self, row: int, column: int) -> None:
+        if column != 3:
+            return
+        item = self.table.item(row, column)
+        if item is not None and item.flags() & Qt.ItemFlag.ItemIsEditable:
+            self.table.editItem(item)
+
+    def _quantity_committed(self, uid: str, value: float) -> None:
+        component = self.state.design.component(uid)
+        if (
+            not self._refreshing
+            and component is not None
+            and abs(component.quantity - value) > 1e-9
+        ):
+            self.state.set_quantity(uid, value)
 
     def _lock_changed(self, uid: str, button: QToolButton, checked: bool) -> None:
         button.setText("🔒" if checked else "🔓")
