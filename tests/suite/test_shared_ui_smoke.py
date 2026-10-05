@@ -3,9 +3,11 @@ from __future__ import annotations
 from civillab_suite.app import SuiteController, bootstrap_shared_data
 from civillab_suite.core.database import CoreDatabase
 from civillab_suite.registry import create_default_registry
+from civillab_suite.tools import TOOLS
 from civillab_suite.ui.calendar_page import SharedCalendarPage
 from civillab_suite.ui.catalog_page import AssayCatalogPage
 from civillab_suite.ui.pie_page import SharedPiePage
+from civillab_suite.ui.tools_page import SharedToolsPage
 
 
 def test_suite_opens_shared_catalog_pie_and_calendar_in_both_areas(
@@ -30,6 +32,12 @@ def test_suite_opens_shared_catalog_pie_and_calendar_in_both_areas(
     assert isinstance(concrete.catalog_page, AssayCatalogPage)
     assert isinstance(concrete.pie_page, SharedPiePage)
     assert isinstance(concrete.calendar_page, SharedCalendarPage)
+    assert isinstance(concrete.tools_page, SharedToolsPage)
+    assert concrete.tools_page.tools is TOOLS
+    labels = [concrete.tabs.tabText(i) for i in range(concrete.tabs.count())]
+    assert labels.index("Herramientas") == labels.index("Normativas") + 1
+    concrete.navigation_buttons[labels.index("Herramientas")].click()
+    assert concrete.tabs.currentWidget() is concrete.tools_page
 
     controller.open_module("prefabricados")
     prefabricated = controller.module_windows["prefabricados"]
@@ -38,6 +46,13 @@ def test_suite_opens_shared_catalog_pie_and_calendar_in_both_areas(
     assert isinstance(pages["Catálogo de Ensayos"], AssayCatalogPage)
     assert isinstance(pages["Plan de Inspección y Ensayo"], SharedPiePage)
     assert isinstance(pages["Calendario"], SharedCalendarPage)
+    assert isinstance(pages["Herramientas"], SharedToolsPage)
+    assert pages["Herramientas"].tools is TOOLS
+    assert pages["Herramientas"] is not concrete.tools_page
+    prefabricated.navigation_buttons[list(pages).index("Herramientas")].click()
+    assert prefabricated.stack.currentWidget() is pages["Herramientas"]
+    concrete.tools_page.open_tool(TOOLS[0].id)
+    assert pages["Herramientas"].tabs.count() == 1
     assert any(item.requirements for item in controller.context.catalog.list_assays(
         "prefabricados"
     ))

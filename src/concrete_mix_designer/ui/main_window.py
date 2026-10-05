@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from civillab_suite.ui.tools_page import SharedToolsPage
 from concrete_mix_designer.config import (
     APP_ICON_PATH,
     APP_NAME,
@@ -30,8 +31,8 @@ from concrete_mix_designer.config import (
 from concrete_mix_designer.domain.metadata_models import DesignSpecification
 from concrete_mix_designer.services.app_state import AppState
 from concrete_mix_designer.ui.dialogs.design_dialogs import SaveDesignDialog
-from concrete_mix_designer.ui.pages.dashboard_page import DashboardPage
 from concrete_mix_designer.ui.pages.calendar_page import LaboratoryCalendarPage
+from concrete_mix_designer.ui.pages.dashboard_page import DashboardPage
 from concrete_mix_designer.ui.pages.design_library_page import DesignLibraryPage
 from concrete_mix_designer.ui.pages.materials_page import MaterialsPage
 from concrete_mix_designer.ui.pages.production_page import ProductionPage
@@ -52,6 +53,7 @@ class MainWindow(QMainWindow):
         shared_catalog_page: QWidget | None = None,
         shared_pie_page: QWidget | None = None,
         shared_calendar_page: QWidget | None = None,
+        shared_tools_page: SharedToolsPage | None = None,
     ):
         super().__init__()
         self.state = state
@@ -81,6 +83,7 @@ class MainWindow(QMainWindow):
         self.calendar_page = shared_calendar_page or LaboratoryCalendarPage(state)
         self.materials_page = MaterialsPage(state)
         self.standards_page = StandardsPage()
+        self.tools_page = shared_tools_page or SharedToolsPage()
         self.catalog_page = shared_catalog_page
         self.pie_page = shared_pie_page
 
@@ -103,6 +106,9 @@ class MainWindow(QMainWindow):
         # beyond the canonical assay catalog.
         tab_definitions.append(
             (self.standards_page, "Normativas", "10 · Biblioteca de normativas")
+        )
+        tab_definitions.append(
+            (self.tools_page, "Herramientas", "11 · Herramientas de laboratorio")
         )
         for page, label, tooltip in tab_definitions:
             index = self.tabs.addTab(page, label)

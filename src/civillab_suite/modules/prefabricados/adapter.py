@@ -19,6 +19,7 @@ def create_window(
         install_shared_control_tuning,
         tune_shared_controls,
     )
+    from civillab_suite.ui.tools_page import SharedToolsPage
     from precon_lab.database import initialize_database
     from precon_lab.ui.main_window import MainWindow
     from precon_lab.ui.styles import APP_STYLESHEET
@@ -51,6 +52,7 @@ def create_window(
         shared_catalog_page=catalog_page,
         shared_pie_page=pie_page,
         shared_calendar_page=calendar_page,
+        shared_tools_page=SharedToolsPage(),
     )
     window.setStyleSheet(APP_STYLESHEET)
     tune_shared_controls(window, light_surfaces=True)

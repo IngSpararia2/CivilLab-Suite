@@ -1,3 +1,44 @@
+TOOLS_STYLESHEET = """
+QWidget#SharedToolsPage, QWidget#SharedToolsPage QWidget {
+    font-family: "Segoe UI"; font-size: 13px;
+}
+QWidget#SharedToolsPage, QWidget#ToolsCatalogContent {
+    background: #f4f7fb; color: #1f2937; font-size: 13px;
+}
+QScrollArea#ToolsCatalog { background: #f4f7fb; border: none; }
+QScrollArea#ToolsCatalog QScrollBar:vertical {
+    background: #edf2f7; width: 12px; margin: 0;
+}
+QScrollArea#ToolsCatalog QScrollBar::handle:vertical {
+    background: #a9b7c6; border-radius: 6px; min-height: 24px;
+}
+QScrollArea#ToolsCatalog QScrollBar::handle:vertical:hover { background: #7891a8; }
+QScrollArea#ToolsCatalog QScrollBar::add-line:vertical,
+QScrollArea#ToolsCatalog QScrollBar::sub-line:vertical {
+    width: 0; height: 0; border: none; image: none; background: transparent;
+}
+QScrollArea#ToolsCatalog QScrollBar::add-page:vertical,
+QScrollArea#ToolsCatalog QScrollBar::sub-page:vertical { background: transparent; }
+QToolButton#ToolTile {
+    background: #ffffff; color: #24415e; border: 1px solid #cbd6e2;
+    border-radius: 24px; padding: 0; font-weight: 600;
+}
+QToolButton#ToolTile:hover { background: #eaf3fc; border-color: #1769aa; }
+QToolButton#ToolTile:pressed { background: #d8e5f2; border-color: #12588f; }
+QToolButton#ToolTile:focus { border: 2px solid #f5a000; }
+QToolButton#ToolTile QLabel { background: transparent; color: #24415e; font-size: 13px; }
+QTabWidget#ToolsTabs::pane {
+    background: #f4f7fb; border: 1px solid #cbd6e2; border-radius: 8px;
+}
+QTabWidget#ToolsTabs QTabBar::tab {
+    background: #e7eef6; color: #24415e; border: 1px solid #cbd6e2;
+    padding: 9px 13px; margin-right: 3px;
+}
+QTabWidget#ToolsTabs QTabBar::tab:selected { background: #ffffff; color: #1769aa; }
+QTabWidget#ToolsTabs QTabBar::tab:hover { background: #d8e5f2; }
+"""
+
+
 SHELL_STYLESHEET = """
 QMainWindow#SuiteWindow, QWidget#SuiteCentral {
     background: #07111f;

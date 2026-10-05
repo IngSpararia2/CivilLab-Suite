@@ -3,9 +3,7 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 from typing import Callable, Optional
-from .history_page import HistoryPage
-from .inspection_plan_page import InspectionPlanPage
-from .widget_tuning import configure_table_columns, finalize_table_columns, tune_widget_tree
+
 from PySide6.QtCore import QDate, QEvent, Qt
 from PySide6.QtGui import QAction, QCursor, QIcon, QPixmap
 from PySide6.QtWidgets import (
@@ -34,7 +32,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QStackedWidget,
-    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -43,12 +40,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from civillab_suite.ui.tools_page import SharedToolsPage
+
 from ..config import APP_ICON_PATH, APP_ICON_PNG_PATH, APP_NAME, APP_VERSION, database_path
 from ..database import session_scope
-from ..importers import ImportValidationError, import_summary_file
-from ..models import Product, SampleSet, WorkflowTask
+from ..importers import import_summary_file
+from ..models import SampleSet
 from ..services import (
-    ValidationError,
     complete_task,
     create_product,
     create_production,
@@ -56,14 +54,15 @@ from ..services import (
     list_batches,
     list_products,
     list_result_candidates,
-    list_results,
     list_tasks_for_date,
     reopen_task,
     reprogram_sample_set,
     save_provisional_result,
     seed_demo_data,
 )
-
+from .history_page import HistoryPage
+from .inspection_plan_page import InspectionPlanPage
+from .widget_tuning import configure_table_columns, finalize_table_columns, tune_widget_tree
 
 RefreshCallback = Callable[[], None]
 
@@ -750,31 +749,6 @@ class ImportPage(QWidget):
             QApplication.restoreOverrideCursor()
 
 
-class ToolsPage(QWidget):
-    def __init__(self) -> None:
-        super().__init__()
-        layout = QVBoxLayout(self)
-        text = QLabel(
-            "Esta sección queda reservada para integrar, como módulos independientes, scripts de granulometría, "
-            "Proctor, generación de informes, análisis estadístico u otras automatizaciones. Cada módulo podrá abrirse "
-            "en una nueva pestaña sin crear otra aplicación ni otra base de datos."
-        )
-        text.setWordWrap(True)
-        text.setObjectName("InfoBanner")
-        layout.addWidget(text)
-        placeholder = QListWidget()
-        placeholder.addItems(
-            [
-                "Granulometría y comparación de curvas — pendiente",
-                "Proctor y control de compactación — pendiente",
-                "Generador de informes — pendiente",
-                "Análisis estadístico de producción — pendiente",
-            ]
-        )
-        layout.addWidget(placeholder)
-        layout.addStretch()
-
-
 class MainWindow(QMainWindow):
     """Ventana principal con el lenguaje visual y la navegación de Concretos Lab."""
 
@@ -788,6 +762,7 @@ class MainWindow(QMainWindow):
         shared_catalog_page: QWidget | None = None,
         shared_pie_page: QWidget | None = None,
         shared_calendar_page: QWidget | None = None,
+        shared_tools_page: SharedToolsPage | None = None,
     ) -> None:
         super().__init__()
         self._on_return_to_suite = on_return_to_suite
@@ -797,6 +772,7 @@ class MainWindow(QMainWindow):
         if APP_ICON_PATH.exists():
             self.setWindowIcon(QIcon(str(APP_ICON_PATH)))
 
+        self.tools_page = shared_tools_page or SharedToolsPage()
         self.stack = QStackedWidget()
         self.shared_pie_page = shared_pie_page
         self.shared_catalog_page = shared_catalog_page
@@ -811,7 +787,7 @@ class MainWindow(QMainWindow):
                 ("Resultados", ResultsPage(self.refresh_all)),
                 ("Historial", HistoryPage()),
                 ("Importar Excel", ImportPage(self.refresh_all)),
-                ("Herramientas", ToolsPage()),
+                ("Herramientas", self.tools_page),
             ]
             self.page_hints = [
                 "Indicadores y estado operativo del laboratorio",
@@ -836,7 +812,7 @@ class MainWindow(QMainWindow):
                 ("Resultados", ResultsPage(self.refresh_all)),
                 ("Historial", HistoryPage()),
                 ("Importar Excel", ImportPage(self.refresh_all)),
-                ("Herramientas", ToolsPage()),
+                ("Herramientas", self.tools_page),
             ]
             self.page_hints = [
                 "Indicadores y estado operativo del laboratorio",
