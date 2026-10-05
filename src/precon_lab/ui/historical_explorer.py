@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -37,7 +36,6 @@ from ..database import session_scope
 from ..historical_queries import (
     HistoricalFilters,
     HistoricalProductionSummary,
-    HistoricalSpecimenView,
     HistoricalTestSummary,
     count_historical_productions,
     list_reading_statuses,
@@ -46,7 +44,6 @@ from ..historical_queries import (
     query_historical_tests_for_production,
 )
 from .widget_tuning import configure_table_columns, finalize_table_columns
-
 
 DisplayGetter = Callable[[Any], Any]
 
@@ -87,11 +84,11 @@ class RecordTableModel(QAbstractTableModel):
         self.columns = list(columns)
         self.rows: list[Any] = []
 
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
-        return 0 if parent.isValid() else len(self.rows)
+    def rowCount(self, parent: QModelIndex | None = None) -> int:  # noqa: N802
+        return 0 if parent is not None and parent.isValid() else len(self.rows)
 
-    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
-        return 0 if parent.isValid() else len(self.columns)
+    def columnCount(self, parent: QModelIndex | None = None) -> int:  # noqa: N802
+        return 0 if parent is not None and parent.isValid() else len(self.columns)
 
     def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
         if not index.isValid():

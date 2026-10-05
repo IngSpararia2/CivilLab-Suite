@@ -27,8 +27,9 @@ def create_window(
 
     install_shared_control_tuning()
 
-    material_repository = MaterialRepository(DATABASE_PATH)
-    laboratory_repository = LaboratoryRepository(DATABASE_PATH)
+    path = suite_context.database.path if suite_context is not None else DATABASE_PATH
+    material_repository = MaterialRepository(path, seed=suite_context is None)
+    laboratory_repository = LaboratoryRepository(path)
     state = AppState(material_repository, laboratory_repository)
     catalog_page = pie_page = calendar_page = None
     if suite_context is not None:
@@ -36,7 +37,7 @@ def create_window(
         from civillab_suite.ui.catalog_page import AssayCatalogPage
         from civillab_suite.ui.pie_page import SharedPiePage
 
-        suite_context.pie.import_concretos_legacy(DATABASE_PATH)
+        suite_context.pie.import_concretos_legacy(path)
         catalog_page = AssayCatalogPage(suite_context.catalog, "concretos")
         pie_page = SharedPiePage(
             suite_context.pie,

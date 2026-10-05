@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QLabel, QTextBrowser, QVBoxLayout, QWidget
 
-
 STANDARDS_HTML = """
 <h2>Biblioteca técnica resumida</h2>
 <p><b>Importante:</b> este panel es una guía de navegación. No sustituye los documentos oficiales,

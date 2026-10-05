@@ -408,16 +408,18 @@ class WorkspacePage(QWidget):
 
     def _populate_row(self, row: int, component) -> None:
         percentage_mode = self.state.percentage_mode
-        relation_controlled = component.uid in self.state.design.relation_controlled_uids
+        reason = self.state.design.controlled_reasons.get(component.uid)
+        relation_controlled = reason is not None
+        effective_locked = component.locked or relation_controlled
         lock_button = QToolButton()
         lock_button.setCheckable(True)
-        lock_button.setChecked(component.locked)
-        lock_button.setText("🔒" if component.locked else "🔓")
-        lock_button.setEnabled(not percentage_mode)
+        lock_button.setChecked(effective_locked)
+        lock_button.setText("🔒" if effective_locked else "🔓")
+        lock_button.setEnabled(not percentage_mode and not relation_controlled)
         lock_button.setToolTip(
             "Candado temporalmente suspendido durante el cálculo por porcentaje."
             if percentage_mode
-            else "Bloquear o liberar este componente"
+            else reason or "Candado manual: mantener esta cantidad durante el cálculo"
         )
         lock_button.toggled.connect(partial(self._lock_changed, component.uid, lock_button))
         self.table.setCellWidget(row, LOCK_COLUMN, lock_button)
@@ -453,7 +455,7 @@ class WorkspacePage(QWidget):
             quantity.setToolTip("Cantidad calculada a partir del porcentaje por masa.")
         elif relation_controlled:
             tooltip = (
-                "Cantidad controlada automáticamente por una relación o dosificación activa."
+                reason
             )
             quantity.setToolTip(tooltip)
             quantity.setFlags(quantity.flags() & ~Qt.ItemFlag.ItemIsEditable)

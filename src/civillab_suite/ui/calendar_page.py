@@ -207,7 +207,7 @@ class SharedCalendarPage(QWidget):
             reference_date.day,
         ))
         field.setCalendarPopup(True)
-        form.addRow("Nueva fecha:", field)
+        form.addRow("Nueva fecha de ensayo (mueve tareas pendientes):" if reference_text else "Nueva fecha:", field)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )

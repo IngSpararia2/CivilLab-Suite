@@ -41,10 +41,10 @@ def test_prefabricados_catalog_sync_is_idempotent_and_preserves_relations(
     source = source_directory / "precon_lab.db"
     with sqlite3.connect(source) as connection:
         expected_standards = connection.execute(
-            "SELECT COUNT(*) FROM standard_references"
+            "SELECT COUNT(*) FROM prefabricados_standard_references"
         ).fetchone()[0]
         expected_methods = connection.execute(
-            "SELECT COUNT(*) FROM laboratory_tests"
+            "SELECT COUNT(*) FROM prefabricados_laboratory_tests"
         ).fetchone()[0]
 
     first = database.sync_prefabricados_catalog(source)

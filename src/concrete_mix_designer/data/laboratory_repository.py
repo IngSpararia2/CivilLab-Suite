@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
+from civillab_suite.sqlite_support import connect as sqlite_connect
 from concrete_mix_designer.domain.laboratory_models import (
     CompressionResultRecord,
     DesignStatisticsRow,
@@ -80,49 +81,50 @@ class LaboratoryRepository:
 
     def __init__(self, database_path: Path):
         database_path.parent.mkdir(parents=True, exist_ok=True)
-        self.database_path = database_path
+        self.database_path = Path(database_path)
+        from civillab_suite.storage import ensure_domain_namespace
+        ensure_domain_namespace(self.database_path, "concretos")
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path)
+        connection = sqlite_connect(self.database_path)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA journal_mode = WAL")
         return connection
 
     def _initialize(self) -> None:
         with self._connect() as connection:
             connection.executescript(
                 """
-                CREATE TABLE IF NOT EXISTS design_groups (
+                CREATE TABLE IF NOT EXISTS concretos_design_groups (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL COLLATE NOCASE UNIQUE,
                     created_at TEXT NOT NULL
                 );
 
-                CREATE TABLE IF NOT EXISTS mix_designs (
+                CREATE TABLE IF NOT EXISTS concretos_mix_designs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     family_uid TEXT NOT NULL,
                     revision INTEGER NOT NULL,
                     name TEXT NOT NULL,
                     group_name TEXT NOT NULL DEFAULT '',
                     description TEXT NOT NULL DEFAULT '',
-                    source_design_id INTEGER REFERENCES mix_designs(id),
+                    source_design_id INTEGER REFERENCES concretos_mix_designs(id),
                     design_json TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     archived INTEGER NOT NULL DEFAULT 0,
                     UNIQUE(family_uid, revision)
                 );
 
-                CREATE TABLE IF NOT EXISTS design_specifications (
+                CREATE TABLE IF NOT EXISTS concretos_design_specifications (
                     design_id INTEGER PRIMARY KEY
-                        REFERENCES mix_designs(id) ON DELETE CASCADE,
+                        REFERENCES concretos_mix_designs(id) ON DELETE CASCADE,
                     specification_json TEXT NOT NULL
                 );
 
-                CREATE TABLE IF NOT EXISTS productions (
+                CREATE TABLE IF NOT EXISTS concretos_productions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    design_id INTEGER NOT NULL REFERENCES mix_designs(id) ON DELETE RESTRICT,
+                    design_id INTEGER NOT NULL REFERENCES concretos_mix_designs(id) ON DELETE RESTRICT,
                     design_name TEXT NOT NULL,
                     design_revision INTEGER NOT NULL,
                     design_json_snapshot TEXT NOT NULL,
@@ -134,9 +136,9 @@ class LaboratoryRepository:
                     created_at TEXT NOT NULL
                 );
 
-                CREATE TABLE IF NOT EXISTS specimens (
+                CREATE TABLE IF NOT EXISTS concretos_specimens (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    production_id INTEGER NOT NULL REFERENCES productions(id) ON DELETE CASCADE,
+                    production_id INTEGER NOT NULL REFERENCES concretos_productions(id) ON DELETE CASCADE,
                     specimen_code TEXT NOT NULL,
                     specimen_type TEXT NOT NULL CHECK(specimen_type IN ('cylinder', 'beam')),
                     target_age_days REAL NOT NULL,
@@ -147,9 +149,9 @@ class LaboratoryRepository:
                     UNIQUE(production_id, specimen_code)
                 );
 
-                CREATE TABLE IF NOT EXISTS fresh_tests (
+                CREATE TABLE IF NOT EXISTS concretos_fresh_tests (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    production_id INTEGER NOT NULL REFERENCES productions(id) ON DELETE CASCADE,
+                    production_id INTEGER NOT NULL REFERENCES concretos_productions(id) ON DELETE CASCADE,
                     test_type TEXT NOT NULL CHECK(test_type IN ('slump', 'spread')),
                     measured_at TEXT NOT NULL,
                     elapsed_minutes INTEGER NOT NULL,
@@ -162,9 +164,9 @@ class LaboratoryRepository:
                     notes TEXT NOT NULL DEFAULT ''
                 );
 
-                CREATE TABLE IF NOT EXISTS compression_results (
+                CREATE TABLE IF NOT EXISTS concretos_compression_results (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    specimen_id INTEGER NOT NULL UNIQUE REFERENCES specimens(id) ON DELETE CASCADE,
+                    specimen_id INTEGER NOT NULL UNIQUE REFERENCES concretos_specimens(id) ON DELETE CASCADE,
                     tested_at TEXT NOT NULL,
                     actual_age_days REAL NOT NULL,
                     diameter_mm REAL NOT NULL,
@@ -178,9 +180,9 @@ class LaboratoryRepository:
                     notes TEXT NOT NULL DEFAULT ''
                 );
 
-                CREATE TABLE IF NOT EXISTS flexural_results (
+                CREATE TABLE IF NOT EXISTS concretos_flexural_results (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    specimen_id INTEGER NOT NULL UNIQUE REFERENCES specimens(id) ON DELETE CASCADE,
+                    specimen_id INTEGER NOT NULL UNIQUE REFERENCES concretos_specimens(id) ON DELETE CASCADE,
                     tested_at TEXT NOT NULL,
                     actual_age_days REAL NOT NULL,
                     width_mm REAL NOT NULL,
@@ -196,41 +198,41 @@ class LaboratoryRepository:
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_mix_designs_name
-                    ON mix_designs(name, archived, created_at);
+                    ON concretos_mix_designs(name, archived, created_at);
                 CREATE INDEX IF NOT EXISTS idx_productions_design
-                    ON productions(design_id, produced_at);
+                    ON concretos_productions(design_id, produced_at);
                 CREATE INDEX IF NOT EXISTS idx_specimens_due
-                    ON specimens(status, planned_test_at);
+                    ON concretos_specimens(status, planned_test_at);
                 CREATE INDEX IF NOT EXISTS idx_fresh_tests_production
-                    ON fresh_tests(production_id, measured_at);
+                    ON concretos_fresh_tests(production_id, measured_at);
                 """
             )
             design_columns = {
                 str(row["name"])
-                for row in connection.execute("PRAGMA table_info(mix_designs)").fetchall()
+                for row in connection.execute("PRAGMA table_info(concretos_mix_designs)").fetchall()
             }
             if "group_name" not in design_columns:
                 connection.execute(
-                    "ALTER TABLE mix_designs ADD COLUMN group_name TEXT NOT NULL DEFAULT ''"
+                    "ALTER TABLE concretos_mix_designs ADD COLUMN group_name TEXT NOT NULL DEFAULT ''"
                 )
             production_columns = {
                 str(row["name"])
-                for row in connection.execute("PRAGMA table_info(productions)").fetchall()
+                for row in connection.execute("PRAGMA table_info(concretos_productions)").fetchall()
             }
             if "specification_json_snapshot" not in production_columns:
                 connection.execute(
-                    "ALTER TABLE productions ADD COLUMN "
+                    "ALTER TABLE concretos_productions ADD COLUMN "
                     "specification_json_snapshot TEXT NOT NULL DEFAULT '{}'"
                 )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_mix_designs_group "
-                "ON mix_designs(group_name, archived, created_at)"
+                "ON concretos_mix_designs(group_name, archived, created_at)"
             )
             connection.execute(
                 """
-                INSERT OR IGNORE INTO design_groups (name, created_at)
+                INSERT OR IGNORE INTO concretos_design_groups (name, created_at)
                 SELECT DISTINCT TRIM(group_name), ?
-                FROM mix_designs
+                FROM concretos_mix_designs
                 WHERE TRIM(group_name) <> ''
                 """,
                 (_serialize_datetime(_now()),),
@@ -242,7 +244,7 @@ class LaboratoryRepository:
     def list_design_groups(self) -> list[str]:
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT name FROM design_groups ORDER BY name COLLATE NOCASE"
+                "SELECT name FROM concretos_design_groups ORDER BY name COLLATE NOCASE"
             ).fetchall()
         return [str(row["name"]) for row in rows]
 
@@ -254,11 +256,11 @@ class LaboratoryRepository:
             raise ValueError("El nombre del grupo no puede superar 80 caracteres.")
         with self._connect() as connection:
             connection.execute(
-                "INSERT OR IGNORE INTO design_groups (name, created_at) VALUES (?, ?)",
+                "INSERT OR IGNORE INTO concretos_design_groups (name, created_at) VALUES (?, ?)",
                 (clean_name, _serialize_datetime(_now())),
             )
             row = connection.execute(
-                "SELECT name FROM design_groups WHERE name = ? COLLATE NOCASE",
+                "SELECT name FROM concretos_design_groups WHERE name = ? COLLATE NOCASE",
                 (clean_name,),
             ).fetchone()
         if row is None:
@@ -282,6 +284,18 @@ class LaboratoryRepository:
         if not clean_name:
             raise ValueError("El diseño debe tener un nombre.")
 
+        try:
+            validated_design = MixDesign.from_dict(design.to_dict())
+        except ValueError as error:
+            raise ValueError(f"El diseño contiene datos inválidos o no finitos: {error}") from error
+        # Unusual/nonconvergent formulations are allowed; corrupt arithmetic is not.
+        if not math.isfinite(validated_design.parameters.target_volume_l) or validated_design.parameters.target_volume_l <= 0:
+            raise ValueError("El volumen objetivo debe ser finito y positivo.")
+        if len({c.uid for c in validated_design.components}) != len(validated_design.components):
+            raise ValueError("Los identificadores de componentes deben ser únicos.")
+        for component in validated_design.components:
+            if not math.isfinite(component.quantity) or component.quantity < 0 or not math.isfinite(component.material.specific_gravity) or component.material.specific_gravity <= 0:
+                raise ValueError("Las cantidades deben ser finitas y no negativas; la gravedad debe ser positiva.")
         family_uid = uuid4().hex
         revision = 1
         if source_design_id is not None:
@@ -294,7 +308,7 @@ class LaboratoryRepository:
             with self._connect() as connection:
                 revision = int(
                     connection.execute(
-                        "SELECT COALESCE(MAX(revision), 0) + 1 FROM mix_designs WHERE family_uid = ?",
+                        "SELECT COALESCE(MAX(revision), 0) + 1 FROM concretos_mix_designs WHERE family_uid = ?",
                         (family_uid,),
                     ).fetchone()[0]
                 )
@@ -313,12 +327,12 @@ class LaboratoryRepository:
         with self._connect() as connection:
             if clean_group:
                 connection.execute(
-                    "INSERT OR IGNORE INTO design_groups (name, created_at) VALUES (?, ?)",
+                    "INSERT OR IGNORE INTO concretos_design_groups (name, created_at) VALUES (?, ?)",
                     (clean_group, _serialize_datetime(created_at)),
                 )
             cursor = connection.execute(
                 """
-                INSERT INTO mix_designs (
+                INSERT INTO concretos_mix_designs (
                     family_uid, revision, name, group_name, description, source_design_id,
                     design_json, created_at, archived
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
@@ -339,7 +353,7 @@ class LaboratoryRepository:
             final_specification.design_id = design_id
             connection.execute(
                 """
-                INSERT OR REPLACE INTO design_specifications (
+                INSERT OR REPLACE INTO concretos_design_specifications (
                     design_id, specification_json
                 ) VALUES (?, ?)
                 """,
@@ -359,8 +373,8 @@ class LaboratoryRepository:
             rows = connection.execute(
                 f"""
                 SELECT d.*, COUNT(p.id) AS production_count
-                FROM mix_designs d
-                LEFT JOIN productions p ON p.design_id = d.id
+                FROM concretos_mix_designs d
+                LEFT JOIN concretos_productions p ON p.design_id = d.id
                 {archived_filter}
                 GROUP BY d.id
                 ORDER BY d.created_at DESC, d.id DESC
@@ -373,8 +387,8 @@ class LaboratoryRepository:
             row = connection.execute(
                 """
                 SELECT d.*, COUNT(p.id) AS production_count
-                FROM mix_designs d
-                LEFT JOIN productions p ON p.design_id = d.id
+                FROM concretos_mix_designs d
+                LEFT JOIN concretos_productions p ON p.design_id = d.id
                 WHERE d.id = ?
                 GROUP BY d.id
                 """,
@@ -394,7 +408,7 @@ class LaboratoryRepository:
         with self._connect() as connection:
             connection.execute(
                 """
-                INSERT INTO design_specifications (design_id, specification_json)
+                INSERT INTO concretos_design_specifications (design_id, specification_json)
                 VALUES (?, ?)
                 ON CONFLICT(design_id) DO UPDATE SET
                     specification_json = excluded.specification_json
@@ -406,7 +420,7 @@ class LaboratoryRepository:
     def get_design_specification(self, design_id: int) -> DesignSpecification:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT specification_json FROM design_specifications WHERE design_id = ?",
+                "SELECT specification_json FROM concretos_design_specifications WHERE design_id = ?",
                 (design_id,),
             ).fetchone()
         if row is not None:
@@ -423,7 +437,7 @@ class LaboratoryRepository:
     def list_design_specifications(self) -> dict[int, DesignSpecification]:
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT design_id, specification_json FROM design_specifications"
+                "SELECT design_id, specification_json FROM concretos_design_specifications"
             ).fetchall()
         output: dict[int, DesignSpecification] = {}
         for row in rows:
@@ -444,7 +458,7 @@ class LaboratoryRepository:
     def archive_design(self, design_id: int, archived: bool = True) -> None:
         with self._connect() as connection:
             connection.execute(
-                "UPDATE mix_designs SET archived = ? WHERE id = ?",
+                "UPDATE concretos_mix_designs SET archived = ? WHERE id = ?",
                 (int(archived), design_id),
             )
 
@@ -460,6 +474,7 @@ class LaboratoryRepository:
         batch_volume_m3: float,
         notes: str = "",
         schedules: list[tuple[SpecimenType, float, int]] | None = None,
+        batch_moistures: dict[str, float] | None = None,
     ) -> ProductionRecord:
         design = self.get_design(design_id)
         if design is None:
@@ -469,11 +484,16 @@ class LaboratoryRepository:
             clean_code = produced_at.strftime("PROD-%Y%m%d-%H%M")
         batch_volume = _positive_float(batch_volume_m3, "El volumen producido")
 
+        snapshot = MixDesign.from_dict(json.loads(design.design_json))
+        if batch_moistures is not None:
+            snapshot.batch_moistures = dict(batch_moistures)
+        from concrete_mix_designer.domain.engine import MixCalculationEngine
+        MixCalculationEngine().moisture_correction(snapshot)
         created_at = _now()
         with self._connect() as connection:
             cursor = connection.execute(
                 """
-                INSERT INTO productions (
+                INSERT INTO concretos_productions (
                     design_id, design_name, design_revision, design_json_snapshot,
                     specification_json_snapshot, produced_at, batch_code,
                     batch_volume_m3, notes, created_at
@@ -483,7 +503,7 @@ class LaboratoryRepository:
                     design.id,
                     design.name,
                     design.revision,
-                    design.design_json,
+                    json.dumps(snapshot.to_dict(), ensure_ascii=False, allow_nan=False, separators=(",", ":")),
                     self._serialize_specification(
                         self.get_design_specification(design.id)
                     ),
@@ -512,13 +532,13 @@ class LaboratoryRepository:
         counters = {
             SpecimenType.CYLINDER: int(
                 connection.execute(
-                    "SELECT COUNT(*) FROM specimens WHERE production_id = ? AND specimen_type = ?",
+                    "SELECT COUNT(*) FROM concretos_specimens WHERE production_id = ? AND specimen_type = ?",
                     (production_id, SpecimenType.CYLINDER.value),
                 ).fetchone()[0]
             ),
             SpecimenType.BEAM: int(
                 connection.execute(
-                    "SELECT COUNT(*) FROM specimens WHERE production_id = ? AND specimen_type = ?",
+                    "SELECT COUNT(*) FROM concretos_specimens WHERE production_id = ? AND specimen_type = ?",
                     (production_id, SpecimenType.BEAM.value),
                 ).fetchone()[0]
             ),
@@ -539,7 +559,7 @@ class LaboratoryRepository:
                 code = f"{prefixes[specimen_type]}-{age:g}D-{counters[specimen_type]:03d}"
                 connection.execute(
                     """
-                    INSERT INTO specimens (
+                    INSERT INTO concretos_specimens (
                         production_id, specimen_code, specimen_type, target_age_days,
                         planned_test_at, status, notes
                     ) VALUES (?, ?, ?, ?, ?, 'planned', '')
@@ -581,8 +601,8 @@ class LaboratoryRepository:
                 f"""
                 SELECT p.*, COUNT(s.id) AS specimen_count,
                        SUM(CASE WHEN s.status = 'tested' THEN 1 ELSE 0 END) AS tested_specimen_count
-                FROM productions p
-                LEFT JOIN specimens s ON s.production_id = p.id
+                FROM concretos_productions p
+                LEFT JOIN concretos_specimens s ON s.production_id = p.id
                 {where}
                 GROUP BY p.id
                 ORDER BY p.produced_at DESC, p.id DESC
@@ -597,8 +617,8 @@ class LaboratoryRepository:
                 """
                 SELECT p.*, COUNT(s.id) AS specimen_count,
                        SUM(CASE WHEN s.status = 'tested' THEN 1 ELSE 0 END) AS tested_specimen_count
-                FROM productions p
-                LEFT JOIN specimens s ON s.production_id = p.id
+                FROM concretos_productions p
+                LEFT JOIN concretos_specimens s ON s.production_id = p.id
                 WHERE p.id = ?
                 GROUP BY p.id
                 """,
@@ -611,7 +631,7 @@ class LaboratoryRepository:
             row = connection.execute(
                 """
                 SELECT design_id, specification_json_snapshot
-                FROM productions WHERE id = ?
+                FROM concretos_productions WHERE id = ?
                 """,
                 (production_id,),
             ).fetchone()
@@ -628,7 +648,7 @@ class LaboratoryRepository:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT * FROM specimens
+                SELECT * FROM concretos_specimens
                 WHERE production_id = ?
                 ORDER BY planned_test_at, specimen_type, specimen_code
                 """,
@@ -639,7 +659,7 @@ class LaboratoryRepository:
     def get_specimen(self, specimen_id: int) -> SpecimenRecord | None:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT * FROM specimens WHERE id = ?", (specimen_id,)
+                "SELECT * FROM concretos_specimens WHERE id = ?", (specimen_id,)
             ).fetchone()
         return self._row_to_specimen(row) if row else None
 
@@ -649,7 +669,7 @@ class LaboratoryRepository:
             raise ValueError("La muestra seleccionada no existe.")
         with self._connect() as connection:
             connection.execute(
-                "UPDATE specimens SET status = ? WHERE id = ?",
+                "UPDATE concretos_specimens SET status = ? WHERE id = ?",
                 (status.value, specimen_id),
             )
 
@@ -712,7 +732,7 @@ class LaboratoryRepository:
         with self._connect() as connection:
             cursor = connection.execute(
                 """
-                INSERT INTO fresh_tests (
+                INSERT INTO concretos_fresh_tests (
                     production_id, test_type, measured_at, elapsed_minutes,
                     slump_mm, spread_d1_mm, spread_d2_mm,
                     concrete_temperature_c, air_content_pct, unit_weight_kg_m3, notes
@@ -798,7 +818,7 @@ class LaboratoryRepository:
         with self._connect() as connection:
             connection.execute(
                 """
-                UPDATE fresh_tests SET
+                UPDATE concretos_fresh_tests SET
                     test_type = ?, measured_at = ?, elapsed_minutes = ?,
                     slump_mm = ?, spread_d1_mm = ?, spread_d2_mm = ?,
                     concrete_temperature_c = ?, air_content_pct = ?,
@@ -828,12 +848,12 @@ class LaboratoryRepository:
         if self.get_fresh_test(test_id) is None:
             raise ValueError("El dato de concreto fresco seleccionado no existe.")
         with self._connect() as connection:
-            connection.execute("DELETE FROM fresh_tests WHERE id = ?", (test_id,))
+            connection.execute("DELETE FROM concretos_fresh_tests WHERE id = ?", (test_id,))
 
     def list_fresh_tests(self, production_id: int) -> list[FreshTestRecord]:
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM fresh_tests WHERE production_id = ? ORDER BY measured_at",
+                "SELECT * FROM concretos_fresh_tests WHERE production_id = ? ORDER BY measured_at",
                 (production_id,),
             ).fetchall()
         return [self._row_to_fresh_test(row) for row in rows]
@@ -841,7 +861,7 @@ class LaboratoryRepository:
     def get_fresh_test(self, test_id: int) -> FreshTestRecord | None:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT * FROM fresh_tests WHERE id = ?", (test_id,)
+                "SELECT * FROM concretos_fresh_tests WHERE id = ?", (test_id,)
             ).fetchone()
         return self._row_to_fresh_test(row) if row else None
 
@@ -926,7 +946,7 @@ class LaboratoryRepository:
         with self._connect() as connection:
             connection.execute(
                 """
-                INSERT INTO compression_results (
+                INSERT INTO concretos_compression_results (
                     specimen_id, tested_at, actual_age_days, diameter_mm, height_mm,
                     mass_kg, max_load_kn, strength_mpa, failure_type, machine,
                     technician, notes
@@ -960,7 +980,7 @@ class LaboratoryRepository:
                 ),
             )
             connection.execute(
-                "UPDATE specimens SET status = 'tested' WHERE id = ?", (specimen_id,)
+                "UPDATE concretos_specimens SET status = 'tested' WHERE id = ?", (specimen_id,)
             )
         result = self.get_compression_result(specimen_id)
         if result is None:
@@ -1015,7 +1035,7 @@ class LaboratoryRepository:
         with self._connect() as connection:
             connection.execute(
                 """
-                INSERT INTO flexural_results (
+                INSERT INTO concretos_flexural_results (
                     specimen_id, tested_at, actual_age_days, width_mm, depth_mm,
                     span_mm, fracture_distance_mm, max_load_kn,
                     modulus_of_rupture_mpa, failure_type, machine, technician, notes
@@ -1051,7 +1071,7 @@ class LaboratoryRepository:
                 ),
             )
             connection.execute(
-                "UPDATE specimens SET status = 'tested' WHERE id = ?", (specimen_id,)
+                "UPDATE concretos_specimens SET status = 'tested' WHERE id = ?", (specimen_id,)
             )
         result = self.get_flexural_result(specimen_id)
         if result is None:
@@ -1061,14 +1081,14 @@ class LaboratoryRepository:
     def get_compression_result(self, specimen_id: int) -> CompressionResultRecord | None:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT * FROM compression_results WHERE specimen_id = ?", (specimen_id,)
+                "SELECT * FROM concretos_compression_results WHERE specimen_id = ?", (specimen_id,)
             ).fetchone()
         return self._row_to_compression(row) if row else None
 
     def get_flexural_result(self, specimen_id: int) -> FlexuralResultRecord | None:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT * FROM flexural_results WHERE specimen_id = ?", (specimen_id,)
+                "SELECT * FROM concretos_flexural_results WHERE specimen_id = ?", (specimen_id,)
             ).fetchone()
         return self._row_to_flexural(row) if row else None
 
@@ -1078,9 +1098,9 @@ class LaboratoryRepository:
             raise ValueError("La muestra seleccionada no existe.")
 
         table = (
-            "compression_results"
+            "concretos_compression_results"
             if specimen.specimen_type == SpecimenType.CYLINDER
-            else "flexural_results"
+            else "concretos_flexural_results"
         )
         with self._connect() as connection:
             cursor = connection.execute(
@@ -1089,7 +1109,7 @@ class LaboratoryRepository:
             deleted = cursor.rowcount > 0
             if deleted and specimen.status != SpecimenStatus.CANCELLED:
                 connection.execute(
-                    "UPDATE specimens SET status = 'planned' WHERE id = ?",
+                    "UPDATE concretos_specimens SET status = 'planned' WHERE id = ?",
                     (specimen_id,),
                 )
         return deleted
@@ -1108,48 +1128,57 @@ class LaboratoryRepository:
     # ------------------------------------------------------------------
     # Statistics
     # ------------------------------------------------------------------
-    def design_statistics(self, design_id: int) -> list[DesignStatisticsRow]:
+    def strength_tests(self, design_id: int, age_days: float | None = None):
+        """One sample per production and target age; incomplete/cancelled samples excluded.
+
+        Uses ACI 318-19/301-20: >=2 cylinders 150 mm or >=3 cylinders 100 mm.
+        Nominal diameter tolerance 5 mm; actual age tolerance 2% (minimum 0.1 d).
+        Historical series selection still requires operator comparability confirmation.
+        """
+        from concrete_mix_designer.domain.strength import StrengthTest
         with self._connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT s.specimen_type, s.target_age_days,
-                       cr.strength_mpa AS compression_mpa,
-                       fr.modulus_of_rupture_mpa AS flexural_mpa
-                FROM productions p
-                JOIN specimens s ON s.production_id = p.id
-                LEFT JOIN compression_results cr ON cr.specimen_id = s.id
-                LEFT JOIN flexural_results fr ON fr.specimen_id = s.id
-                WHERE p.design_id = ? AND s.status = 'tested'
-                ORDER BY s.specimen_type, s.target_age_days
-                """,
-                (design_id,),
-            ).fetchall()
-
-        grouped: dict[tuple[SpecimenType, float], list[float]] = {}
+            rows = connection.execute("""
+                SELECT p.id AS production_id, s.id AS specimen_id, s.target_age_days,
+                       s.status, cr.strength_mpa, cr.diameter_mm, cr.actual_age_days, cr.tested_at
+                FROM concretos_productions p JOIN concretos_specimens s ON s.production_id=p.id
+                LEFT JOIN concretos_compression_results cr ON cr.specimen_id=s.id
+                WHERE p.design_id=? AND s.specimen_type='cylinder'
+                ORDER BY p.id, s.target_age_days, s.id
+            """, (design_id,)).fetchall()
+        groups = {}
         for row in rows:
-            specimen_type = SpecimenType(row["specimen_type"])
-            value = row["compression_mpa"] if specimen_type == SpecimenType.CYLINDER else row["flexural_mpa"]
-            if value is None:
+            if age_days is None or row['target_age_days'] == age_days:
+                groups.setdefault((row['production_id'], row['target_age_days']), []).append(row)
+        tests = []
+        for (production_id, age), members in groups.items():
+            if any(r['status'] != 'tested' or r['strength_mpa'] is None or r['strength_mpa'] <= 0
+                   or abs(r['actual_age_days'] - age) > max(.1, age * .02) for r in members):
                 continue
-            key = (specimen_type, float(row["target_age_days"]))
-            grouped.setdefault(key, []).append(float(value))
+            large = all(abs(r['diameter_mm'] - 150) <= 5 for r in members)
+            small = all(abs(r['diameter_mm'] - 100) <= 5 for r in members)
+            if not ((large and len(members) >= 2) or (small and len(members) >= 3)):
+                continue
+            tests.append(StrengthTest(f"{production_id}:{age:g}", production_id, age,
+                         max(datetime.fromisoformat(r['tested_at']).date() for r in members),
+                         tuple(r['specimen_id'] for r in members),
+                         statistics.fmean(r['strength_mpa'] for r in members)))
+        return sorted(tests, key=lambda test: (test.tested_on, test.key))
 
-        output: list[DesignStatisticsRow] = []
-        for (specimen_type, target_age), values in sorted(
-            grouped.items(), key=lambda item: (item[0][0].value, item[0][1])
-        ):
-            output.append(
-                DesignStatisticsRow(
-                    specimen_type=specimen_type,
-                    target_age_days=target_age,
-                    result_count=len(values),
-                    average_mpa=statistics.fmean(values),
-                    minimum_mpa=min(values),
-                    maximum_mpa=max(values),
-                    standard_deviation_mpa=statistics.stdev(values) if len(values) > 1 else 0.0,
-                )
-            )
-        return output
+    def design_statistics(self, design_id: int) -> list[DesignStatisticsRow]:
+        grouped = {}
+        for test in self.strength_tests(design_id):
+            grouped.setdefault((SpecimenType.CYLINDER, test.age_days), []).append(test.strength_mpa)
+        # Flexural results are descriptive specimen statistics, never inputs to f'cr.
+        with self._connect() as connection:
+            rows = connection.execute("""SELECT s.target_age_days, f.modulus_of_rupture_mpa
+                FROM concretos_specimens s JOIN concretos_productions p ON p.id=s.production_id
+                JOIN concretos_flexural_results f ON f.specimen_id=s.id
+                WHERE p.design_id=? AND s.status='tested'""", (design_id,)).fetchall()
+        for row in rows:
+            grouped.setdefault((SpecimenType.BEAM, row[0]), []).append(row[1])
+        return [DesignStatisticsRow(kind, age, len(values), statistics.fmean(values),
+                    min(values), max(values), statistics.stdev(values) if len(values)>1 else None)
+                for (kind, age), values in sorted(grouped.items(), key=lambda item: (item[0][0].value,item[0][1]))]
 
     @staticmethod
     def _serialize_specification(specification: DesignSpecification) -> str:

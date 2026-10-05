@@ -4,7 +4,8 @@ import pytest
 from sqlalchemy import func, select
 
 from precon_lab.inspection_catalog import seed_inspection_catalog
-from precon_lab.models import InspectionPlanEntry, LaboratoryTest, MaterialType, TestApplicability as ApplicabilityModel
+from precon_lab.models import InspectionPlanEntry, LaboratoryTest, MaterialType
+from precon_lab.models import TestApplicability as ApplicabilityModel
 from precon_lab.services import (
     ValidationError,
     create_inspection_plan_entry,

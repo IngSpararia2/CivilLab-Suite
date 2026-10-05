@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Iterable, Optional
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session, joinedload
 
 from .models import (
@@ -313,7 +314,11 @@ def reprogram_sample_set(session: Session, sample_set_id: int, new_test_date: da
         raise ValidationError("El conjunto de absorción exclusiva no usa fecha objetivo de ensayo.")
     if new_test_date <= sample_set.batch.production_date:
         raise ValidationError("La nueva fecha debe ser posterior a la fecha de producción.")
+    if sample_set.result is not None:
+        raise ValidationError("Una muestra con resultado no se puede reprogramar.")
     delta = new_test_date - sample_set.planned_test_date
+    if any(task.status != "DONE" and task.scheduled_date + delta < sample_set.batch.production_date for task in sample_set.tasks):
+        raise ValidationError("La preparación no puede quedar antes de la producción.")
     for task in sample_set.tasks:
         if task.status != "DONE":
             task.scheduled_date = task.scheduled_date + delta
@@ -346,6 +351,14 @@ def save_provisional_result(
     sample_set = session.get(SampleSet, sample_set_id)
     if sample_set is None or sample_set.purpose not in {"ABSORPTION", "COMPRESSION", "FLEXURE"}:
         raise ValidationError("Selecciona un conjunto de absorción, compresión o flexotracción.")
+    if test_date < sample_set.batch.production_date:
+        raise ValidationError("La fecha del ensayo no puede preceder a la producción.")
+    values = (absorption_avg, strength_avg, flexural_avg, abrasion_avg)
+    if any(value is not None and (not math.isfinite(value) or value < 0) for value in values):
+        raise ValidationError("Los resultados deben ser finitos y no negativos.")
+    required = {"ABSORPTION": absorption_avg, "COMPRESSION": strength_avg, "FLEXURE": flexural_avg}[sample_set.purpose]
+    if required is None:
+        raise ValidationError("Falta el resultado correspondiente al tipo de ensayo.")
     result = sample_set.result
     if result is None:
         result = TestResult(
@@ -364,6 +377,12 @@ def save_provisional_result(
         result.status = "PROVISIONAL"
         result.source = "MANUAL"
     sample_set.status = "TESTED"
+    # Recording a measurement closes its terminal testing task. Preparation
+    # checklists remain independently auditable rather than fabricating completion.
+    terminal = max(sample_set.tasks, key=lambda task: task.sequence, default=None)
+    if terminal is not None:
+        terminal.status = "DONE"
+        terminal.completed_at = datetime.combine(test_date, datetime.min.time())
     session.flush()
     return result
 

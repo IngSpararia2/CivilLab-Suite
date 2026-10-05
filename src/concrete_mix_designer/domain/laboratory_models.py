@@ -145,4 +145,4 @@ class DesignStatisticsRow:
     average_mpa: float
     minimum_mpa: float
     maximum_mpa: float
-    standard_deviation_mpa: float
+    standard_deviation_mpa: float | None

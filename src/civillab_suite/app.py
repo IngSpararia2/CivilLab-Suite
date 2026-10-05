@@ -9,32 +9,19 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox
 
 from .config import APP_NAME, APP_VERSION, core_database_path
 from .context import SuiteContext, build_suite_context
-from .core.catalog import CatalogService
 from .core.database import CoreDatabase
-from .core.pie import PieService
 from .core.scheduling import NavigationTarget
-from .data_paths import prepare_prefabricados_data
 from .registry import ModuleRegistry, create_default_registry
 from .ui.shell import SuiteWindow
 
 
 def bootstrap_shared_data(registry: ModuleRegistry, database: CoreDatabase) -> Path:
-    database.initialize()
-    database.sync_modules(registry.all())
+    from civillab_suite.storage import migrate_workspace
+    from precon_lab.database import use_database
 
-    prefabricados_database = prepare_prefabricados_data()
-    from precon_lab.database import initialize_database
-
-    initialize_database()
-    if not database.migration_applied("prefabricados_catalog_v3"):
-        database.sync_prefabricados_catalog(prefabricados_database)
-    CatalogService(database).apply_builtin_seed()
-    pie = PieService(database)
-    pie.import_prefabricados_legacy(prefabricados_database)
-    from concrete_mix_designer.config import DATABASE_PATH
-
-    pie.import_concretos_legacy(DATABASE_PATH)
-    return prefabricados_database
+    migrate_workspace(database.path)
+    use_database(database.path)
+    return database.path
 
 
 class SuiteController(QObject):
@@ -129,7 +116,7 @@ def create_application(argv: list[str] | None = None) -> QApplication:
     return app
 
 
-def main() -> int:
+def main(initial_module_id: str | None = None) -> int:
     if sys.platform == "win32":
         try:
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
@@ -141,8 +128,24 @@ def main() -> int:
     app = create_application()
     registry = create_default_registry()
     database = CoreDatabase(core_database_path())
-    bootstrap_shared_data(registry, database)
+    from civillab_suite.config import suite_data_dir
+    from civillab_suite.storage import migrate_workspace
+    from concrete_mix_designer.config import LEGACY_DATABASE_PATH
+    from precon_lab.config import legacy_database_path
+
+    legacy_prefab = suite_data_dir() / "prefabricados" / "precon_lab.db"
+    if not legacy_prefab.exists():
+        legacy_prefab = legacy_database_path()
+    try:
+        migrate_workspace(database.path, LEGACY_DATABASE_PATH, legacy_prefab)
+        bootstrap_shared_data(registry, database)
+    except Exception as error:
+        QMessageBox.critical(None, "No se pudo preparar el entorno", str(error))
+        return 1
     controller = SuiteController(registry, database)
     app.suite_controller = controller
-    controller.shell.showMaximized()
+    if initial_module_id:
+        controller.open_module(initial_module_id)
+    else:
+        controller.shell.showMaximized()
     return app.exec()

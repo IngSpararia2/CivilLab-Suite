@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
 from concrete_mix_designer.data.calendar_repository import CalendarRepository
 from concrete_mix_designer.domain.pie_models import PieFrequency, PieInspectionPlan
 
-
 PLAN_ID_ROLE = int(Qt.ItemDataRole.UserRole)
 
 

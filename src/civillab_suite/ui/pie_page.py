@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
 from civillab_suite.core.catalog import CatalogService
 from civillab_suite.core.pie import PieFrequency, PiePlan, PieService
 
-
 FREQUENCY_LABELS = {
     PieFrequency.DAILY: "Diario",
     PieFrequency.WEEKLY: "Semanal",

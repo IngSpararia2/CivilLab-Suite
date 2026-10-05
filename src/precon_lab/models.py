@@ -21,7 +21,7 @@ class Base(DeclarativeBase):
 
 
 class Product(Base):
-    __tablename__ = "products"
+    __tablename__ = "prefabricados_products"
     __table_args__ = (UniqueConstraint("name", "code", name="uq_product_name_code"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -39,10 +39,10 @@ class Product(Base):
 
 
 class ProductionBatch(Base):
-    __tablename__ = "production_batches"
+    __tablename__ = "prefabricados_production_batches"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False)
+    product_id: Mapped[int] = mapped_column(ForeignKey("prefabricados_products.id"), nullable=False)
     production_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     lot_code: Mapped[str] = mapped_column(String(100), nullable=False, default="")
     quantity_produced: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
@@ -56,10 +56,10 @@ class ProductionBatch(Base):
 
 
 class SampleSet(Base):
-    __tablename__ = "sample_sets"
+    __tablename__ = "prefabricados_sample_sets"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    batch_id: Mapped[int] = mapped_column(ForeignKey("production_batches.id"), nullable=False)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("prefabricados_production_batches.id"), nullable=False)
     purpose: Mapped[str] = mapped_column(String(30), nullable=False)  # ABSORPTION / COMPRESSION / FLEXURE
     target_age_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     planned_test_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, index=True)
@@ -85,11 +85,11 @@ class SampleSet(Base):
 
 
 class Specimen(Base):
-    __tablename__ = "specimens"
+    __tablename__ = "prefabricados_specimens"
     __table_args__ = (UniqueConstraint("sample_set_id", "ordinal", name="uq_specimen_ordinal"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    sample_set_id: Mapped[int] = mapped_column(ForeignKey("sample_sets.id"), nullable=False)
+    sample_set_id: Mapped[int] = mapped_column(ForeignKey("prefabricados_sample_sets.id"), nullable=False)
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
     specimen_code: Mapped[str] = mapped_column(String(120), nullable=False)
     current_state: Mapped[str] = mapped_column(String(40), nullable=False, default="REGISTERED")
@@ -100,10 +100,10 @@ class Specimen(Base):
 
 
 class WorkflowTask(Base):
-    __tablename__ = "workflow_tasks"
+    __tablename__ = "prefabricados_workflow_tasks"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    sample_set_id: Mapped[int] = mapped_column(ForeignKey("sample_sets.id"), nullable=False)
+    sample_set_id: Mapped[int] = mapped_column(ForeignKey("prefabricados_sample_sets.id"), nullable=False)
     task_type: Mapped[str] = mapped_column(String(60), nullable=False)
     title: Mapped[str] = mapped_column(String(260), nullable=False)
     instructions: Mapped[str] = mapped_column(Text, nullable=False, default="")
@@ -118,7 +118,7 @@ class WorkflowTask(Base):
 
 
 class ImportBatch(Base):
-    __tablename__ = "import_batches"
+    __tablename__ = "prefabricados_import_batches"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     file_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
@@ -138,10 +138,10 @@ class ImportBatch(Base):
 
 
 class HistoricalTest(Base):
-    __tablename__ = "historical_tests"
+    __tablename__ = "prefabricados_historical_tests"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    import_batch_id: Mapped[int] = mapped_column(ForeignKey("import_batches.id"), nullable=False)
+    import_batch_id: Mapped[int] = mapped_column(ForeignKey("prefabricados_import_batches.id"), nullable=False)
     row_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     test_type: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
 
@@ -192,11 +192,11 @@ class HistoricalTest(Base):
 
 
 class HistoricalSpecimen(Base):
-    __tablename__ = "historical_specimens"
+    __tablename__ = "prefabricados_historical_specimens"
     __table_args__ = (UniqueConstraint("historical_test_id", "ordinal", name="uq_hist_spec_ordinal"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    historical_test_id: Mapped[int] = mapped_column(ForeignKey("historical_tests.id"), nullable=False)
+    historical_test_id: Mapped[int] = mapped_column(ForeignKey("prefabricados_historical_tests.id"), nullable=False)
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
     specimen_code: Mapped[str] = mapped_column(String(160), nullable=False, default="")
     material: Mapped[str] = mapped_column(String(180), nullable=False, default="")
@@ -220,12 +220,12 @@ class HistoricalSpecimen(Base):
 
 
 class TestResult(Base):
-    __tablename__ = "test_results"
+    __tablename__ = "prefabricados_test_results"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    sample_set_id: Mapped[int] = mapped_column(ForeignKey("sample_sets.id"), nullable=False, unique=True)
+    sample_set_id: Mapped[int] = mapped_column(ForeignKey("prefabricados_sample_sets.id"), nullable=False, unique=True)
     imported_test_id: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("historical_tests.id"), nullable=True, unique=True
+        ForeignKey("prefabricados_historical_tests.id"), nullable=True, unique=True
     )
     test_type: Mapped[str] = mapped_column(String(30), nullable=False)
     test_date: Mapped[date] = mapped_column(Date, nullable=False)
@@ -246,7 +246,7 @@ class TestResult(Base):
 
 
 class MaterialType(Base):
-    __tablename__ = "material_types"
+    __tablename__ = "prefabricados_material_types"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     code: Mapped[str] = mapped_column(String(60), nullable=False, unique=True)
@@ -262,7 +262,7 @@ class MaterialType(Base):
 
 
 class StandardReference(Base):
-    __tablename__ = "standard_references"
+    __tablename__ = "prefabricados_standard_references"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     code: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
@@ -275,12 +275,12 @@ class StandardReference(Base):
 
 
 class LaboratoryTest(Base):
-    __tablename__ = "laboratory_tests"
+    __tablename__ = "prefabricados_laboratory_tests"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     code: Mapped[str] = mapped_column(String(80), nullable=False, unique=True)
     name: Mapped[str] = mapped_column(String(220), nullable=False)
-    standard_id: Mapped[Optional[int]] = mapped_column(ForeignKey("standard_references.id"), nullable=True)
+    standard_id: Mapped[Optional[int]] = mapped_column(ForeignKey("prefabricados_standard_references.id"), nullable=True)
     equipment: Mapped[str] = mapped_column(Text, nullable=False, default="")
     procedure_summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
     active: Mapped[bool] = mapped_column(default=True, nullable=False)
@@ -298,15 +298,15 @@ class LaboratoryTest(Base):
 
 
 class TestApplicability(Base):
-    __tablename__ = "test_applicabilities"
+    __tablename__ = "prefabricados_test_applicabilities"
     __table_args__ = (
         UniqueConstraint("material_type_id", "laboratory_test_id", name="uq_test_applicability"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    material_type_id: Mapped[int] = mapped_column(ForeignKey("material_types.id"), nullable=False)
-    laboratory_test_id: Mapped[int] = mapped_column(ForeignKey("laboratory_tests.id"), nullable=False)
-    standard_id: Mapped[Optional[int]] = mapped_column(ForeignKey("standard_references.id"), nullable=True)
+    material_type_id: Mapped[int] = mapped_column(ForeignKey("prefabricados_material_types.id"), nullable=False)
+    laboratory_test_id: Mapped[int] = mapped_column(ForeignKey("prefabricados_laboratory_tests.id"), nullable=False)
+    standard_id: Mapped[Optional[int]] = mapped_column(ForeignKey("prefabricados_standard_references.id"), nullable=True)
     normative_frequency: Mapped[str] = mapped_column(String(180), nullable=False, default="")
     procedure_detail: Mapped[str] = mapped_column(Text, nullable=False, default="")
     preferred: Mapped[bool] = mapped_column(default=False, nullable=False)
@@ -317,14 +317,14 @@ class TestApplicability(Base):
 
 
 class TestRequirement(Base):
-    __tablename__ = "test_requirements"
+    __tablename__ = "prefabricados_test_requirements"
     __table_args__ = (UniqueConstraint("seed_key", name="uq_test_requirement_seed_key"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     seed_key: Mapped[str] = mapped_column(String(180), nullable=False)
-    material_type_id: Mapped[int] = mapped_column(ForeignKey("material_types.id"), nullable=False)
-    laboratory_test_id: Mapped[int] = mapped_column(ForeignKey("laboratory_tests.id"), nullable=False)
-    standard_id: Mapped[Optional[int]] = mapped_column(ForeignKey("standard_references.id"), nullable=True)
+    material_type_id: Mapped[int] = mapped_column(ForeignKey("prefabricados_material_types.id"), nullable=False)
+    laboratory_test_id: Mapped[int] = mapped_column(ForeignKey("prefabricados_laboratory_tests.id"), nullable=False)
+    standard_id: Mapped[Optional[int]] = mapped_column(ForeignKey("prefabricados_standard_references.id"), nullable=True)
     minimum: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     maximum: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     unit: Mapped[str] = mapped_column(String(50), nullable=False, default="")
@@ -343,11 +343,11 @@ class TestRequirement(Base):
 
 
 class InspectionPlanEntry(Base):
-    __tablename__ = "inspection_plan_entries"
+    __tablename__ = "prefabricados_inspection_plan_entries"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    material_type_id: Mapped[int] = mapped_column(ForeignKey("material_types.id"), nullable=False)
-    laboratory_test_id: Mapped[int] = mapped_column(ForeignKey("laboratory_tests.id"), nullable=False)
+    material_type_id: Mapped[int] = mapped_column(ForeignKey("prefabricados_material_types.id"), nullable=False)
+    laboratory_test_id: Mapped[int] = mapped_column(ForeignKey("prefabricados_laboratory_tests.id"), nullable=False)
     responsible: Mapped[str] = mapped_column(String(180), nullable=False)
     frequency_type: Mapped[str] = mapped_column(String(30), nullable=False)
     weekday: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)

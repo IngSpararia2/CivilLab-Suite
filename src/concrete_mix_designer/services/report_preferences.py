@@ -7,7 +7,6 @@ from pathlib import Path
 
 from concrete_mix_designer.config import user_data_dir
 
-
 SUPPORTED_LOGO_SUFFIXES = {".png", ".jpg", ".jpeg"}
 
 

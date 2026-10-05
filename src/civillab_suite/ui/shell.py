@@ -189,6 +189,9 @@ class SuiteWindow(QMainWindow):
         self.import_data_action = QAction("Importar Datos Generales…", self)
         self.import_data_action.triggered.connect(self._import_general_data)
         file_menu.addAction(self.import_data_action)
+        self.new_environment_action = QAction("Nuevo entorno de datos…", self)
+        self.new_environment_action.triggered.connect(self._new_environment)
+        file_menu.addAction(self.new_environment_action)
         file_menu.addSeparator()
         exit_action = QAction("Salir de CivilLab Suite", self)
         exit_action.triggered.connect(self.close)
@@ -259,4 +262,24 @@ class SuiteWindow(QMainWindow):
             "cargar el nuevo estado al volver a iniciarse.\n\n"
             f"Respaldo anterior:\n{result.backup_path}",
         )
+        self.restart_required.emit()
+
+    def _new_environment(self) -> None:
+        answer = QMessageBox.warning(
+            self, "Nuevo entorno de datos",
+            "Los datos actuales serán apartados después de crear un respaldo .civillab. "
+            "Podrá recuperarlos con Importar Datos Generales. ¿Crear una base vacía?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.prepare_for_data_import.emit()
+        try:
+            backup = self.portability_service.new_environment()
+        except (DataPortabilityError, OSError, ValueError) as error:
+            QMessageBox.critical(self, "No se pudo crear el entorno", str(error))
+            return
+        QMessageBox.information(self, "Entorno nuevo",
+            f"La base nueva está lista. CivilLab se cerrará; vuelva a iniciarlo.\nRespaldo: {backup}")
         self.restart_required.emit()

@@ -6,7 +6,7 @@ from datetime import date
 from typing import Iterable, Optional
 
 from sqlalchemy import Select, case, func, or_, select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
 from .historical_codes import build_production_code, build_test_code, derive_product_code
 from .models import HistoricalSpecimen, HistoricalTest

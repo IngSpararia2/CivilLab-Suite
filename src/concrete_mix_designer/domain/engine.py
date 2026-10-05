@@ -6,7 +6,6 @@ from math import isfinite
 from concrete_mix_designer.domain.models import (
     ConstraintMode,
     MaterialCategory,
-    MixComponent,
     MixDesign,
     RatioConstraint,
 )
@@ -20,88 +19,170 @@ class SolveResult:
 
 
 class MixCalculationEngine:
-    """Constraint solver for the desktop MVP.
+    """Simultaneous linear physical constraints, nonnegative masses and manual locks.
 
-    Priority order:
-    1. Locked water/cementitious ratio.
-    2. Visible custom relationships and admixture dosage rules.
-    3. Closure of absolute volume to the configured target, normally 1000 L.
-
-    The first pass treats the component edited by the user as temporarily fixed.
-    Reconciliation passes then solve all active constraints together.
+    Free quantities use a deterministic weighted projection. Edited quantities and
+    independent non-aggregate masses are preferences, relaxed only if necessary.
+    Infeasible systems leave every input quantity unchanged.
     """
 
     TOLERANCE_L = 0.02
     VALUE_TOLERANCE = 1e-6
 
     def recalculate(self, design: MixDesign, changed_uid: str | None = None) -> SolveResult:
+        from concrete_mix_designer.domain.linear_solver import closest_solution
+
         design.warnings.clear()
-        self._sanitize(design)
-
-        if design.parameters.w_cm_locked:
-            self._enforce_water_cementitious_ratio(design, changed_uid)
-        self._enforce_constraints(design, changed_uid)
-        self._close_absolute_volume(design, changed_uid)
-
-        # Reconcile constraints after volumetric compensation. Pair constraints
-        # preserve their combined mass when neither side is explicitly fixed,
-        # which keeps cementitious totals and aggregate ratios stable.
-        for _ in range(5):
-            previous = self._state_signature(design)
-            if design.parameters.w_cm_locked:
-                self._enforce_water_cementitious_ratio(design, None)
-            self._enforce_constraints(design, None)
-            self._close_absolute_volume(design, None)
-            if self._state_signature(design) == previous:
-                break
-
-        residual = design.parameters.target_volume_l - design.total_absolute_volume_l
-        converged = abs(residual) <= self.TOLERANCE_L
-        if not converged:
-            design.warnings.append(
-                f"No fue posible cerrar el volumen: quedan {residual:+.2f} L. "
-                "Libera al menos un componente compatible o revisa los candados y relaciones."
-            )
-        design.warnings[:] = list(dict.fromkeys(design.warnings))
-        return SolveResult(converged=converged, residual_l=residual, warnings=list(design.warnings))
-
-    @staticmethod
-    def _state_signature(design: MixDesign) -> tuple[float, ...]:
-        return tuple(round(component.quantity, 8) for component in design.components)
-
-    def _sanitize(self, design: MixDesign) -> None:
-        params = design.parameters
-        params.target_volume_l = self._finite_value(
-            params.target_volume_l, "El volumen objetivo"
-        )
-        params.target_w_cm = self._finite_value(
-            params.target_w_cm, "La relación agua/material cementante"
-        )
-        params.target_volume_l = max(params.target_volume_l, 1.0)
-        params.target_w_cm = max(params.target_w_cm, 0.05)
-
-        for component in design.components:
-            component.quantity = self._finite_value(
-                component.quantity,
-                f"La cantidad de {component.material.name}",
-            )
-            component.quantity = max(component.quantity, 0.0)
-            specific_gravity = self._finite_value(
-                component.material.specific_gravity,
-                f"La gravedad específica de {component.material.name}",
-            )
-            component.material.specific_gravity = specific_gravity
-            if component.category != MaterialCategory.AIR and specific_gravity <= 0:
-                component.material.specific_gravity = 1.0
-                design.warnings.append(
-                    f"Se corrigió la gravedad específica inválida de {component.material.name}."
+        components = design.enabled_components()
+        n = len(components)
+        index = {c.uid: i for i, c in enumerate(components)}
+        if len(index) != n:
+            raise ValueError("Los componentes deben tener identificadores únicos.")
+        target = self._finite_value(design.parameters.target_volume_l, "El volumen objetivo")
+        ratio = self._finite_value(design.parameters.target_w_cm, "La relación a/mc")
+        if target <= 0 or (design.parameters.w_cm_locked and ratio <= 0):
+            raise ValueError("Volumen y relación bloqueada deben ser positivos.")
+        quantities = []
+        volumes = []
+        for c in components:
+            q = self._finite_value(c.quantity, f"La cantidad de {c.material.name}")
+            sg = self._finite_value(c.material.specific_gravity, "La gravedad específica")
+            if q < 0 or sg <= 0:
+                raise ValueError(
+                    "Las masas no pueden ser negativas y la gravedad debe ser positiva."
                 )
+            quantities.append(q)
+            volumes.append(1.0 if c.category == MaterialCategory.AIR else 1.0 / sg)
+        rows, rhs = [volumes], [target]
 
+        def fixed(i, value):
+            row = [0.0] * n
+            row[i] = 1.0
+            return row, value
+
+        for i, c in enumerate(components):
+            if c.locked:
+                row, value = fixed(i, c.quantity)
+                rows.append(row)
+                rhs.append(value)
+        water = [i for i, c in enumerate(components) if c.category == MaterialCategory.WATER]
+        cement = [
+            i for i, c in enumerate(components) if c.category == MaterialCategory.CEMENTITIOUS
+        ]
+        if design.parameters.w_cm_locked:
+            if not water or not cement:
+                design.warnings.append(
+                    "La relación a/mc requiere al menos un agua y un material cementante."
+                )
+                return self._failed(design)
+            row = [0.0] * n
+            for i in water:
+                row[i] = 1.0
+            for i in cement:
+                row[i] = -ratio
+            rows.append(row)
+            rhs.append(0.0)
+        invalid = False
         for constraint in design.ratio_constraints:
-            constraint.target_ratio = self._finite_value(
-                constraint.target_ratio, "El objetivo de la relación o dosificación"
+            if not constraint.enabled:
+                continue
+            a = design.component(constraint.numerator_uid)
+            b = design.component(constraint.denominator_uid)
+            if a is not None and (not a.enabled or (b is not None and not b.enabled)):
+                design.warnings.append("Relación omitida: usa un componente inactivo.")
+                continue
+            if a is None or (constraint.requires_denominator and (b is None or b.uid == a.uid)):
+                design.warnings.append(
+                    "Relación inválida: falta un componente o se relaciona consigo mismo."
+                )
+                invalid = True
+                continue
+            value = self._finite_value(constraint.target_ratio, "La relación")
+            if value < 0 or (constraint.mode == ConstraintMode.PERCENT_OF_PAIR and value > 100):
+                raise ValueError("Objetivo de relación fuera de rango.")
+            if a.category == MaterialCategory.AIR or (b and b.category == MaterialCategory.AIR):
+                design.warnings.append("Una relación de masas no puede usar aire en litros.")
+                invalid = True
+                continue
+            row = [0.0] * n
+            row[index[a.uid]] = 1.0
+            if constraint.mode == ConstraintMode.PERCENT_OF_PAIR:
+                row[index[a.uid]] = 1.0 - value / 100.0
+                row[index[b.uid]] = -value / 100.0
+            elif constraint.mode in (
+                ConstraintMode.PERCENT_OF_CEMENTITIOUS,
+                ConstraintMode.ML_PER_100KG_CEMENTITIOUS,
+            ):
+                coefficient = value / 100.0
+                if constraint.mode == ConstraintMode.ML_PER_100KG_CEMENTITIOUS:
+                    coefficient *= a.material.density_kg_l / 1000.0
+                if not cement:
+                    invalid = True
+                    design.warnings.append("La dosificación requiere material cementante.")
+                for i in cement:
+                    row[i] -= coefficient
+            else:
+                coefficient = value
+                if constraint.mode == ConstraintMode.PERCENT_OF_B:
+                    coefficient /= 100.0
+                if constraint.mode == ConstraintMode.ML_PER_100KG_B:
+                    coefficient *= a.material.density_kg_l / 100000.0
+                row[index[b.uid]] -= coefficient
+            rows.append(row)
+            rhs.append(0.0)
+        if invalid:
+            return self._failed(design)
+        # Prefer keeping independent non-aggregate quantities; relax these preferences
+        # only when the physical equations require it. Manual locks are never relaxed.
+        controlled = design.controlled_reasons
+        preferences = [
+            i
+            for i, c in enumerate(components)
+            if not c.locked
+            and c.uid not in controlled
+            and c.category
+            not in (MaterialCategory.FINE_AGGREGATE, MaterialCategory.COARSE_AGGREGATE)
+        ]
+        preferred_rows = [fixed(i, quantities[i]) for i in preferences]
+        weights = [max(q, 1.0) ** 2 for q in quantities]
+        attempts = [preferred_rows, []]
+        if changed_uid in index and not components[index[changed_uid]].locked:
+            changed = fixed(index[changed_uid], quantities[index[changed_uid]])
+            attempts.insert(0, preferred_rows + [changed])
+        solution = None
+        for extra in attempts:
+            solution = closest_solution(
+                rows + [r for r, _ in extra], rhs + [v for _, v in extra], quantities, weights
             )
-            constraint.target_ratio = max(constraint.target_ratio, 0.0)
+            if solution is not None:
+                if design.parameters.w_cm_locked and sum(solution[i] for i in cement) <= 1e-9:
+                    solution = None
+                    continue
+                break
+        if solution is None or any(not isfinite(q) for q in solution):
+            design.warnings.append(
+                "Conflicto de candados/relaciones: no hay grados de libertad compatibles; se conservan las cantidades."
+            )
+            return self._failed(design)
+        if any(
+            abs(sum(a * x for a, x in zip(row, solution, strict=True)) - value) > 1e-5
+            for row, value in zip(rows, rhs, strict=True)
+        ):
+            design.warnings.append(
+                "El sistema no cumple simultáneamente las restricciones; se conservan las cantidades."
+            )
+            return self._failed(design)
+        for c, value in zip(components, solution, strict=True):
+            if not c.locked:
+                c.quantity = value
+        return SolveResult(True, target - design.total_absolute_volume_l, list(design.warnings))
+
+    def _failed(self, design):
+        residual = design.parameters.target_volume_l - design.total_absolute_volume_l
+        design.warnings.append(
+            f"No fue posible cerrar el volumen y las restricciones: residual {residual:+.3f} L."
+        )
+        return SolveResult(False, residual, list(design.warnings))
 
     @staticmethod
     def _finite_value(value: float, label: str) -> float:
@@ -113,324 +194,23 @@ class MixCalculationEngine:
             raise ValueError(f"{label} debe ser un número finito.")
         return numeric
 
-    def _enforce_water_cementitious_ratio(
-        self, design: MixDesign, changed_uid: str | None
-    ) -> None:
-        waters = design.by_category(MaterialCategory.WATER)
-        cementitious = design.by_category(MaterialCategory.CEMENTITIOUS)
-        if not waters or not cementitious:
-            design.warnings.append(
-                "La relación a/mc requiere al menos un agua y un material cementante."
-            )
-            return
-
-        changed = design.component(changed_uid)
-        ratio = design.parameters.target_w_cm
-        water_locked = all(component.locked for component in waters)
-        cement_locked = all(component.locked for component in cementitious)
-
-        if changed and changed.category == MaterialCategory.CEMENTITIOUS and not water_locked:
-            target_water = design.total_cementitious_kg * ratio
-            self._set_total_quantity(
-                waters,
-                target_water,
-                temporary_fixed_uid=None,
-                warning_sink=design.warnings,
-                label="agua",
-            )
-            return
-
-        if cement_locked and not water_locked:
-            target_water = design.total_cementitious_kg * ratio
-            self._set_total_quantity(
-                waters,
-                target_water,
-                temporary_fixed_uid=(
-                    changed_uid if changed and changed.category == MaterialCategory.WATER else None
-                ),
-                warning_sink=design.warnings,
-                label="agua",
-            )
-            return
-
-        target_cementitious = design.water_kg / ratio
-        temporary_fixed = (
-            changed_uid if changed and changed.category == MaterialCategory.CEMENTITIOUS else None
-        )
-        self._set_cementitious_total(design, target_cementitious, temporary_fixed)
-
-    def _set_total_quantity(
-        self,
-        components: list[MixComponent],
-        target_total: float,
-        temporary_fixed_uid: str | None,
-        warning_sink: list[str],
-        label: str,
-    ) -> None:
-        fixed = [
-            component
-            for component in components
-            if component.locked or component.uid == temporary_fixed_uid
-        ]
-        adjustable = [component for component in components if component not in fixed]
-        fixed_total = sum(component.quantity for component in fixed)
-        remainder = target_total - fixed_total
-
-        if remainder < -self.VALUE_TOLERANCE:
-            warning_sink.append(
-                f"Conflicto de candados: los valores fijos de {label} superan el objetivo."
-            )
-            return
-        if not adjustable:
-            if abs(remainder) > self.VALUE_TOLERANCE:
-                warning_sink.append(
-                    f"No hay componentes libres de {label} para satisfacer la restricción."
-                )
-            return
-
-        self._allocate_mass(adjustable, max(remainder, 0.0))
-
-    def _set_cementitious_total(
-        self,
-        design: MixDesign,
-        target_total: float,
-        temporary_fixed_uid: str | None,
-    ) -> None:
-        components = design.by_category(MaterialCategory.CEMENTITIOUS)
-        fixed = [
-            component
-            for component in components
-            if component.locked or component.uid == temporary_fixed_uid
-        ]
-        adjustable = [component for component in components if component not in fixed]
-        fixed_total = sum(component.quantity for component in fixed)
-        remainder = target_total - fixed_total
-
-        if remainder < -self.VALUE_TOLERANCE:
-            design.warnings.append(
-                "Conflicto de candados: los cementantes fijos exceden el total exigido por a/mc."
-            )
-            return
-        if not adjustable:
-            if abs(remainder) > self.VALUE_TOLERANCE:
-                design.warnings.append(
-                    "No hay cementantes libres para mantener la relación agua/material cementante."
-                )
-            return
-
-        # Preserve the current visible proportions. Explicit composition rules
-        # are applied immediately afterwards and therefore replace blend_pct.
-        self._allocate_mass(adjustable, max(remainder, 0.0))
-
-    @staticmethod
-    def _allocate_mass(components: list[MixComponent], target_total: float) -> None:
-        if not components:
-            return
-        weights = [max(component.quantity, 0.0) for component in components]
-        if sum(weights) <= 1e-9:
-            weights = [1.0] * len(components)
-        total_weight = sum(weights)
-        for component, weight in zip(components, weights, strict=True):
-            component.quantity = target_total * weight / total_weight
-
-    def _enforce_constraints(self, design: MixDesign, changed_uid: str | None) -> None:
-        for constraint in design.ratio_constraints:
-            if not constraint.enabled:
-                continue
-            numerator = design.component(constraint.numerator_uid)
-            denominator = design.component(constraint.denominator_uid)
-            if numerator is None:
-                design.warnings.append("Existe una relación cuyo material A ya no está en el diseño.")
-                continue
-            if not numerator.enabled or (
-                constraint.requires_denominator
-                and denominator is not None
-                and not denominator.enabled
-            ):
-                design.warnings.append(
-                    f"{numerator.material.name}: la relación se omitió porque usa un componente inactivo."
-                )
-                continue
-            if constraint.requires_denominator and (
-                denominator is None or denominator.uid == numerator.uid
-            ):
-                design.warnings.append(
-                    f"{numerator.material.name}: la relación requiere un material B válido."
-                )
-                continue
-
-            if constraint.mode in {
-                ConstraintMode.MASS_RATIO,
-                ConstraintMode.PERCENT_OF_B,
-                ConstraintMode.PERCENT_OF_PAIR,
-            }:
-                self._enforce_pair_mass_constraint(
-                    design, constraint, numerator, denominator, changed_uid
-                )
-            elif constraint.mode == ConstraintMode.ML_PER_100KG_B:
-                self._enforce_ml_per_component(
-                    design, constraint, numerator, denominator, changed_uid
-                )
-            elif constraint.mode == ConstraintMode.PERCENT_OF_CEMENTITIOUS:
-                self._enforce_percent_cementitious(design, constraint, numerator)
-            elif constraint.mode == ConstraintMode.ML_PER_100KG_CEMENTITIOUS:
-                self._enforce_ml_cementitious(design, constraint, numerator)
-
-    def _enforce_pair_mass_constraint(
-        self,
-        design: MixDesign,
-        constraint: RatioConstraint,
-        numerator: MixComponent,
-        denominator: MixComponent,
-        changed_uid: str | None,
-    ) -> None:
-        numerator_fixed = numerator.locked or numerator.uid == changed_uid
-        denominator_fixed = denominator.locked or denominator.uid == changed_uid
-
-        if constraint.mode == ConstraintMode.PERCENT_OF_PAIR:
-            fraction = constraint.target_ratio / 100.0
-            if fraction > 1.0:
-                design.warnings.append(
-                    f"{numerator.material.name}: el porcentaje del total A+B no puede superar 100 %."
-                )
-                return
-            if numerator_fixed and denominator_fixed:
-                total = numerator.quantity + denominator.quantity
-                actual = numerator.quantity / total if total > 1e-9 else 0.0
-                if abs(actual - fraction) > self.VALUE_TOLERANCE:
-                    self._fixed_constraint_warning(design, numerator, denominator)
-                return
-            if numerator_fixed:
-                if fraction <= 1e-9:
-                    if numerator.quantity > self.VALUE_TOLERANCE:
-                        self._fixed_constraint_warning(design, numerator, denominator)
-                    else:
-                        numerator.quantity = 0.0
-                    return
-                denominator.quantity = max(numerator.quantity * (1.0 - fraction) / fraction, 0.0)
-                return
-            if denominator_fixed:
-                if fraction >= 1.0 - 1e-9:
-                    if denominator.quantity > self.VALUE_TOLERANCE:
-                        self._fixed_constraint_warning(design, numerator, denominator)
-                    else:
-                        denominator.quantity = 0.0
-                    return
-                numerator.quantity = max(denominator.quantity * fraction / (1.0 - fraction), 0.0)
-                return
-
-            pair_total = numerator.quantity + denominator.quantity
-            numerator.quantity = pair_total * fraction
-            denominator.quantity = pair_total * (1.0 - fraction)
-            return
-
-        mass_ratio = constraint.target_ratio
-        if constraint.mode == ConstraintMode.PERCENT_OF_B:
-            mass_ratio /= 100.0
-
-        if numerator_fixed and denominator_fixed:
-            actual = numerator.quantity / denominator.quantity if denominator.quantity > 1e-9 else 0.0
-            if abs(actual - mass_ratio) > self.VALUE_TOLERANCE:
-                self._fixed_constraint_warning(design, numerator, denominator)
-            return
-        if numerator_fixed:
-            if mass_ratio <= 1e-9:
-                if numerator.quantity > self.VALUE_TOLERANCE:
-                    self._fixed_constraint_warning(design, numerator, denominator)
-                else:
-                    denominator.quantity = max(denominator.quantity, 0.0)
-                return
-            denominator.quantity = numerator.quantity / mass_ratio
-            return
-        if denominator_fixed:
-            numerator.quantity = denominator.quantity * mass_ratio
-            return
-
-        pair_total = numerator.quantity + denominator.quantity
-        if mass_ratio <= 1e-9:
-            numerator.quantity = 0.0
-            denominator.quantity = pair_total
-        else:
-            denominator.quantity = pair_total / (1.0 + mass_ratio)
-            numerator.quantity = pair_total - denominator.quantity
-
-    def _enforce_ml_per_component(
-        self,
-        design: MixDesign,
-        constraint: RatioConstraint,
-        numerator: MixComponent,
-        denominator: MixComponent,
-        changed_uid: str | None,
-    ) -> None:
-        density = max(numerator.material.density_kg_l, 1e-9)
-        dose = constraint.target_ratio
-        numerator_fixed = numerator.locked or numerator.uid == changed_uid
-        denominator_fixed = denominator.locked or denominator.uid == changed_uid
-
-        if numerator_fixed and denominator_fixed:
-            actual = self.constraint_actual_value(design, constraint)
-            if abs(actual - dose) > self.VALUE_TOLERANCE:
-                self._fixed_constraint_warning(design, numerator, denominator)
-            return
-        if numerator_fixed:
-            if dose <= 1e-9:
-                if numerator.quantity > self.VALUE_TOLERANCE:
-                    self._fixed_constraint_warning(design, numerator, denominator)
-                return
-            denominator.quantity = numerator.quantity / density * 1000.0 * 100.0 / dose
-            return
-
-        # A is the dosed product. B remains the basis when neither is fixed.
-        volume_l = dose * denominator.quantity / 100.0 / 1000.0
-        numerator.quantity = volume_l * density
-
-    def _enforce_percent_cementitious(
-        self, design: MixDesign, constraint: RatioConstraint, numerator: MixComponent
-    ) -> None:
-        target = design.total_cementitious_kg * constraint.target_ratio / 100.0
-        if numerator.locked:
-            if abs(numerator.quantity - target) > self.VALUE_TOLERANCE:
-                design.warnings.append(
-                    f"{numerator.material.name} está bloqueado y no cumple su porcentaje del cementante total."
-                )
-            return
-        numerator.quantity = target
-
-    def _enforce_ml_cementitious(
-        self, design: MixDesign, constraint: RatioConstraint, numerator: MixComponent
-    ) -> None:
-        density = max(numerator.material.density_kg_l, 1e-9)
-        volume_l = (
-            constraint.target_ratio * design.total_cementitious_kg / 100.0 / 1000.0
-        )
-        target = volume_l * density
-        if numerator.locked:
-            if abs(numerator.quantity - target) > self.VALUE_TOLERANCE:
-                design.warnings.append(
-                    f"{numerator.material.name} está bloqueado y no cumple su dosis por cementante total."
-                )
-            return
-        numerator.quantity = target
-
-    @staticmethod
-    def _fixed_constraint_warning(
-        design: MixDesign, numerator: MixComponent, denominator: MixComponent
-    ) -> None:
-        design.warnings.append(
-            f"{numerator.material.name} y {denominator.material.name} están fijos y no cumplen la relación."
-        )
-
-    def constraint_actual_value(
-        self, design: MixDesign, constraint: RatioConstraint
-    ) -> float:
+    def constraint_actual_value(self, design: MixDesign, constraint: RatioConstraint) -> float:
         numerator = design.component(constraint.numerator_uid)
         denominator = design.component(constraint.denominator_uid)
         if numerator is None:
             return 0.0
         if constraint.mode == ConstraintMode.MASS_RATIO:
-            return numerator.quantity / denominator.quantity if denominator and denominator.quantity > 1e-9 else 0.0
+            return (
+                numerator.quantity / denominator.quantity
+                if denominator and denominator.quantity > 1e-9
+                else 0.0
+            )
         if constraint.mode == ConstraintMode.PERCENT_OF_B:
-            return 100.0 * numerator.quantity / denominator.quantity if denominator and denominator.quantity > 1e-9 else 0.0
+            return (
+                100.0 * numerator.quantity / denominator.quantity
+                if denominator and denominator.quantity > 1e-9
+                else 0.0
+            )
         if constraint.mode == ConstraintMode.PERCENT_OF_PAIR:
             total = numerator.quantity + (denominator.quantity if denominator else 0.0)
             return 100.0 * numerator.quantity / total if total > 1e-9 else 0.0
@@ -440,119 +220,15 @@ class MixCalculationEngine:
         density = max(numerator.material.density_kg_l, 1e-9)
         numerator_ml = numerator.quantity / density * 1000.0
         if constraint.mode == ConstraintMode.ML_PER_100KG_B:
-            return numerator_ml * 100.0 / denominator.quantity if denominator and denominator.quantity > 1e-9 else 0.0
+            return (
+                numerator_ml * 100.0 / denominator.quantity
+                if denominator and denominator.quantity > 1e-9
+                else 0.0
+            )
         if constraint.mode == ConstraintMode.ML_PER_100KG_CEMENTITIOUS:
             total = design.total_cementitious_kg
             return numerator_ml * 100.0 / total if total > 1e-9 else 0.0
         return 0.0
-
-    def _close_absolute_volume(self, design: MixDesign, changed_uid: str | None) -> None:
-        residual = design.parameters.target_volume_l - design.total_absolute_volume_l
-        if abs(residual) <= self.TOLERANCE_L:
-            return
-
-        aggregates = [
-            component
-            for component in design.enabled_components()
-            if component.category in (MaterialCategory.FINE_AGGREGATE, MaterialCategory.COARSE_AGGREGATE)
-            and not component.locked
-            and component.uid != changed_uid
-        ]
-        if not aggregates:
-            aggregates = [
-                component
-                for component in design.enabled_components()
-                if component.category in (MaterialCategory.FINE_AGGREGATE, MaterialCategory.COARSE_AGGREGATE)
-                and not component.locked
-            ]
-        if aggregates:
-            self._adjust_pool_by_absolute_volume(aggregates, residual)
-
-        residual = design.parameters.target_volume_l - design.total_absolute_volume_l
-        if abs(residual) <= self.TOLERANCE_L:
-            return
-        if design.parameters.w_cm_locked:
-            self._adjust_water_cementitious_pair(design, residual, changed_uid)
-
-    def _adjust_pool_by_absolute_volume(
-        self, pool: list[MixComponent], delta_l: float
-    ) -> None:
-        if not pool or abs(delta_l) <= self.TOLERANCE_L:
-            return
-
-        if delta_l > 0:
-            current_volumes = [component.absolute_volume_l for component in pool]
-            weights = current_volumes if sum(current_volumes) > 1e-9 else [1.0] * len(pool)
-            weight_sum = sum(weights)
-            for component, weight in zip(pool, weights, strict=True):
-                add_l = delta_l * weight / weight_sum
-                component.quantity += add_l * component.material.specific_gravity
-            return
-
-        volume_to_remove = -delta_l
-        active = list(pool)
-        while active and volume_to_remove > self.TOLERANCE_L:
-            current = [component.absolute_volume_l for component in active]
-            current_total = sum(current)
-            if current_total <= 1e-9:
-                break
-            removed_this_round = 0.0
-            survivors: list[MixComponent] = []
-            for component, component_volume in zip(active, current, strict=True):
-                requested = volume_to_remove * component_volume / current_total
-                removable = min(requested, component_volume)
-                new_volume = component_volume - removable
-                component.quantity = new_volume * component.material.specific_gravity
-                removed_this_round += removable
-                if new_volume > self.TOLERANCE_L:
-                    survivors.append(component)
-            if removed_this_round <= 1e-9:
-                break
-            volume_to_remove -= removed_this_round
-            active = survivors
-
-    def _adjust_water_cementitious_pair(
-        self, design: MixDesign, residual_l: float, changed_uid: str | None
-    ) -> None:
-        all_waters = design.by_category(MaterialCategory.WATER)
-        all_cementitious = design.by_category(MaterialCategory.CEMENTITIOUS)
-        adjustable_waters = [
-            component
-            for component in all_waters
-            if not component.locked and component.uid != changed_uid
-        ]
-        adjustable_cementitious = [
-            component
-            for component in all_cementitious
-            if not component.locked and component.uid != changed_uid
-        ]
-        if not adjustable_waters or not adjustable_cementitious:
-            return
-
-        ratio = design.parameters.target_w_cm
-        weights = [max(component.quantity, 0.0) for component in adjustable_cementitious]
-        if sum(weights) <= 1e-9:
-            weights = [1.0] * len(adjustable_cementitious)
-        weight_sum = sum(weights)
-
-        liters_per_kg_cementitious = ratio
-        for component, weight in zip(adjustable_cementitious, weights, strict=True):
-            share = weight / weight_sum
-            liters_per_kg_cementitious += share / component.material.specific_gravity
-        if liters_per_kg_cementitious <= 1e-9:
-            return
-
-        target_total_c = design.total_cementitious_kg + residual_l / liters_per_kg_cementitious
-        if target_total_c <= 0:
-            return
-        self._set_cementitious_total(design, target_total_c, temporary_fixed_uid=None)
-        self._set_total_quantity(
-            all_waters,
-            target_total_c * ratio,
-            temporary_fixed_uid=None,
-            warning_sink=design.warnings,
-            label="agua",
-        )
 
     def moisture_correction(self, design: MixDesign) -> list[dict[str, float | str]]:
         """Return batch quantities using aggregate moisture/absorption.
@@ -570,9 +246,7 @@ class MixCalculationEngine:
                 component.quantity, f"La cantidad de {component.material.name}"
             )
             if quantity < 0:
-                raise ValueError(
-                    f"La cantidad de {component.material.name} no puede ser negativa."
-                )
+                raise ValueError(f"La cantidad de {component.material.name} no puede ser negativa.")
             if component.category not in (
                 MaterialCategory.FINE_AGGREGATE,
                 MaterialCategory.COARSE_AGGREGATE,
@@ -583,7 +257,7 @@ class MixCalculationEngine:
                 f"La absorción de {component.material.name}",
             )
             moisture_pct = self._finite_value(
-                component.material.moisture_pct,
+                design.batch_moistures.get(component.uid, component.material.moisture_pct),
                 f"La humedad de {component.material.name}",
             )
             if absorption_pct < 0:
@@ -591,9 +265,7 @@ class MixCalculationEngine:
                     f"La absorción de {component.material.name} no puede ser negativa."
                 )
             if moisture_pct < 0:
-                raise ValueError(
-                    f"La humedad de {component.material.name} no puede ser negativa."
-                )
+                raise ValueError(f"La humedad de {component.material.name} no puede ser negativa.")
 
         for component in design.enabled_components():
             if component.category not in (
@@ -602,7 +274,9 @@ class MixCalculationEngine:
             ):
                 continue
             absorption = component.material.absorption_pct / 100.0
-            moisture = component.material.moisture_pct / 100.0
+            moisture = (
+                design.batch_moistures.get(component.uid, component.material.moisture_pct) / 100.0
+            )
             od_mass = component.quantity / (1.0 + absorption)
             wet_mass = od_mass * (1.0 + moisture)
             free_water = od_mass * (moisture - absorption)
@@ -638,6 +312,11 @@ class MixCalculationEngine:
                         "uid": component.uid,
                         "name": component.material.name,
                         "unit": "L",
+                        "absorption_pct": component.material.absorption_pct,
+                        "moisture_pct": design.batch_moistures.get(
+                            component.uid, component.material.moisture_pct
+                        ),
+                        "mass_basis": "SSD",
                         "design_quantity": component.quantity,
                         "corrected_quantity": component.quantity,
                         "water_contribution": 0.0,
@@ -647,9 +326,7 @@ class MixCalculationEngine:
                 )
                 continue
 
-            aggregate = next(
-                (row for row in aggregate_rows if row["uid"] == component.uid), None
-            )
+            aggregate = next((row for row in aggregate_rows if row["uid"] == component.uid), None)
             if aggregate:
                 corrected = float(aggregate["batch_wet_kg"])
                 contribution = float(aggregate["free_water_kg"])
@@ -670,6 +347,11 @@ class MixCalculationEngine:
                     "uid": component.uid,
                     "name": component.material.name,
                     "unit": "kg",
+                    "absorption_pct": component.material.absorption_pct,
+                    "moisture_pct": design.batch_moistures.get(
+                        component.uid, component.material.moisture_pct
+                    ),
+                    "mass_basis": "SSD",
                     "design_quantity": component.quantity,
                     "corrected_quantity": corrected,
                     "water_contribution": contribution,

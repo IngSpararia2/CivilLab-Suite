@@ -14,26 +14,28 @@ def create_window(
     if QApplication.instance() is None:
         raise RuntimeError("CivilLab Suite debe crear QApplication antes de abrir Prefabricados.")
 
-    prepare_prefabricados_data()
+    if suite_context is None:
+        prepare_prefabricados_data()
     from civillab_suite.ui.shared_controls import (
         install_shared_control_tuning,
         tune_shared_controls,
     )
     from civillab_suite.ui.tools_page import SharedToolsPage
-    from precon_lab.database import initialize_database
+    from precon_lab.database import initialize_database, use_database
     from precon_lab.ui.main_window import MainWindow
     from precon_lab.ui.styles import APP_STYLESHEET
 
-    initialize_database()
+    if suite_context is not None:
+        use_database(suite_context.database.path)
+    initialize_database(seed_products=suite_context is None)
     install_shared_control_tuning()
     catalog_page = pie_page = calendar_page = None
     if suite_context is not None:
         from civillab_suite.ui.calendar_page import SharedCalendarPage
         from civillab_suite.ui.catalog_page import AssayCatalogPage
         from civillab_suite.ui.pie_page import SharedPiePage
-        from precon_lab.config import database_path
 
-        suite_context.pie.import_prefabricados_legacy(database_path())
+        suite_context.pie.import_prefabricados_legacy(suite_context.database.path)
         catalog_page = AssayCatalogPage(suite_context.catalog, "prefabricados")
         pie_page = SharedPiePage(
             suite_context.pie,

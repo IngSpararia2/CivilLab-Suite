@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from civillab_suite.sqlite_support import connect as sqlite_connect
 from concrete_mix_designer.domain.laboratory_models import SpecimenStatus, SpecimenType
 from concrete_mix_designer.domain.pie_models import (
     PieFrequency,
@@ -80,32 +81,33 @@ class CalendarRepository:
 
     def __init__(self, database_path: Path):
         self.database_path = Path(database_path)
+        from civillab_suite.storage import ensure_domain_namespace
+        ensure_domain_namespace(self.database_path, "concretos")
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path)
+        connection = sqlite_connect(self.database_path)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA journal_mode = WAL")
         return connection
 
     def _initialize(self) -> None:
         with self._connect() as connection:
             connection.executescript(
                 """
-                CREATE TABLE IF NOT EXISTS specimen_checklist (
+                CREATE TABLE IF NOT EXISTS concretos_specimen_checklist (
                     specimen_id INTEGER PRIMARY KEY
-                        REFERENCES specimens(id) ON DELETE CASCADE,
+                        REFERENCES concretos_specimens(id) ON DELETE CASCADE,
                     completed INTEGER NOT NULL DEFAULT 0,
                     completed_at TEXT,
                     updated_at TEXT NOT NULL
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_specimen_checklist_completed
-                    ON specimen_checklist(completed, updated_at);
+                    ON concretos_specimen_checklist(completed, updated_at);
 
-                CREATE TABLE IF NOT EXISTS pie_inspection_plans (
+                CREATE TABLE IF NOT EXISTS concretos_pie_inspection_plans (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL,
                     frequency TEXT NOT NULL CHECK(frequency IN (
@@ -120,17 +122,17 @@ class CalendarRepository:
                     updated_at TEXT NOT NULL
                 );
 
-                CREATE TABLE IF NOT EXISTS pie_inspection_steps (
+                CREATE TABLE IF NOT EXISTS concretos_pie_inspection_steps (
                     plan_id INTEGER NOT NULL
-                        REFERENCES pie_inspection_plans(id) ON DELETE CASCADE,
+                        REFERENCES concretos_pie_inspection_plans(id) ON DELETE CASCADE,
                     day_number INTEGER NOT NULL CHECK(day_number > 0),
                     description TEXT NOT NULL,
                     PRIMARY KEY(plan_id, day_number)
                 );
 
-                CREATE TABLE IF NOT EXISTS pie_occurrence_checklist (
+                CREATE TABLE IF NOT EXISTS concretos_pie_occurrence_checklist (
                     plan_id INTEGER NOT NULL
-                        REFERENCES pie_inspection_plans(id) ON DELETE CASCADE,
+                        REFERENCES concretos_pie_inspection_plans(id) ON DELETE CASCADE,
                     occurrence_start TEXT NOT NULL,
                     day_number INTEGER NOT NULL CHECK(day_number > 0),
                     completed_at TEXT NOT NULL,
@@ -138,9 +140,9 @@ class CalendarRepository:
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_pie_plans_start
-                    ON pie_inspection_plans(start_date, frequency);
+                    ON concretos_pie_inspection_plans(start_date, frequency);
                 CREATE INDEX IF NOT EXISTS idx_pie_checklist_date
-                    ON pie_occurrence_checklist(occurrence_start, plan_id);
+                    ON concretos_pie_occurrence_checklist(occurrence_start, plan_id);
                 """
             )
 
@@ -180,10 +182,10 @@ class CalendarRepository:
                     COALESCE(d.group_name, '') AS group_name,
                     COALESCE(c.completed, 0) AS checklist_completed,
                     c.completed_at AS checklist_completed_at
-                FROM specimens s
-                JOIN productions p ON p.id = s.production_id
-                LEFT JOIN mix_designs d ON d.id = p.design_id
-                LEFT JOIN specimen_checklist c ON c.specimen_id = s.id
+                FROM concretos_specimens s
+                JOIN concretos_productions p ON p.id = s.production_id
+                LEFT JOIN concretos_mix_designs d ON d.id = p.design_id
+                LEFT JOIN concretos_specimen_checklist c ON c.specimen_id = s.id
                 WHERE substr(s.planned_test_at, 1, 10) BETWEEN ? AND ?
                 ORDER BY s.planned_test_at, p.batch_code, s.specimen_type, s.specimen_code
                 """,
@@ -195,7 +197,7 @@ class CalendarRepository:
         now = _now()
         with self._connect() as connection:
             specimen = connection.execute(
-                "SELECT status FROM specimens WHERE id = ?", (specimen_id,)
+                "SELECT status FROM concretos_specimens WHERE id = ?", (specimen_id,)
             ).fetchone()
             if specimen is None:
                 raise ValueError("La muestra seleccionada ya no existe.")
@@ -204,7 +206,7 @@ class CalendarRepository:
                 return
             connection.execute(
                 """
-                INSERT INTO specimen_checklist (
+                INSERT INTO concretos_specimen_checklist (
                     specimen_id, completed, completed_at, updated_at
                 ) VALUES (?, ?, ?, ?)
                 ON CONFLICT(specimen_id) DO UPDATE SET
@@ -253,8 +255,8 @@ class CalendarRepository:
                          AND COALESCE(c.completed, 0) = 0
                         THEN 1 ELSE 0 END
                     ) AS upcoming_seven_days
-                FROM specimens s
-                LEFT JOIN specimen_checklist c ON c.specimen_id = s.id
+                FROM concretos_specimens s
+                LEFT JOIN concretos_specimen_checklist c ON c.specimen_id = s.id
                 """,
                 (
                     reference.isoformat(),
@@ -278,7 +280,7 @@ class CalendarRepository:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT * FROM pie_inspection_plans
+                SELECT * FROM concretos_pie_inspection_plans
                 ORDER BY name COLLATE NOCASE, start_date, id
                 """
             ).fetchall()
@@ -287,7 +289,7 @@ class CalendarRepository:
     def get_pie_plan(self, plan_id: int) -> PieInspectionPlan | None:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT * FROM pie_inspection_plans WHERE id = ?", (plan_id,)
+                "SELECT * FROM concretos_pie_inspection_plans WHERE id = ?", (plan_id,)
             ).fetchone()
             return self._row_to_pie_plan(connection, row) if row else None
 
@@ -302,7 +304,7 @@ class CalendarRepository:
             if plan.id is None:
                 cursor = connection.execute(
                     """
-                    INSERT INTO pie_inspection_plans (
+                    INSERT INTO concretos_pie_inspection_plans (
                         name, frequency, recurrence_interval, start_date,
                         duration_days, created_at, updated_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -322,7 +324,7 @@ class CalendarRepository:
                 plan_id = int(plan.id)
                 cursor = connection.execute(
                     """
-                    UPDATE pie_inspection_plans SET
+                    UPDATE concretos_pie_inspection_plans SET
                         name = ?, frequency = ?, recurrence_interval = ?,
                         start_date = ?, duration_days = ?, updated_at = ?
                     WHERE id = ?
@@ -343,14 +345,14 @@ class CalendarRepository:
                     int(row["day_number"]): str(row["description"])
                     for row in connection.execute(
                         """
-                        SELECT day_number, description FROM pie_inspection_steps
+                        SELECT day_number, description FROM concretos_pie_inspection_steps
                         WHERE plan_id = ?
                         """,
                         (plan_id,),
                     ).fetchall()
                 }
                 connection.execute(
-                    "DELETE FROM pie_inspection_steps WHERE plan_id = ?", (plan_id,)
+                    "DELETE FROM concretos_pie_inspection_steps WHERE plan_id = ?", (plan_id,)
                 )
                 schedule = PieInspectionPlan(
                     id=plan_id,
@@ -369,7 +371,7 @@ class CalendarRepository:
                 checklist_rows = connection.execute(
                     """
                     SELECT occurrence_start, day_number
-                    FROM pie_occurrence_checklist WHERE plan_id = ?
+                    FROM concretos_pie_occurrence_checklist WHERE plan_id = ?
                     """,
                     (plan_id,),
                 ).fetchall()
@@ -384,14 +386,14 @@ class CalendarRepository:
                 ]
                 connection.executemany(
                     """
-                    DELETE FROM pie_occurrence_checklist
+                    DELETE FROM concretos_pie_occurrence_checklist
                     WHERE plan_id = ? AND occurrence_start = ? AND day_number = ?
                     """,
                     obsolete,
                 )
             connection.executemany(
                 """
-                INSERT INTO pie_inspection_steps (plan_id, day_number, description)
+                INSERT INTO concretos_pie_inspection_steps (plan_id, day_number, description)
                 VALUES (?, ?, ?)
                 """,
                 [(plan_id, day_number, step) for day_number, step in enumerate(steps, 1)],
@@ -404,7 +406,7 @@ class CalendarRepository:
     def delete_pie_plan(self, plan_id: int) -> bool:
         with self._connect() as connection:
             cursor = connection.execute(
-                "DELETE FROM pie_inspection_plans WHERE id = ?", (plan_id,)
+                "DELETE FROM concretos_pie_inspection_plans WHERE id = ?", (plan_id,)
             )
         return cursor.rowcount > 0
 
@@ -447,7 +449,7 @@ class CalendarRepository:
             rows = connection.execute(
                 f"""
                 SELECT plan_id, occurrence_start, day_number, completed_at
-                FROM pie_occurrence_checklist
+                FROM concretos_pie_occurrence_checklist
                 WHERE plan_id IN ({placeholders})
                   AND occurrence_start BETWEEN ? AND ?
                 """,
@@ -508,7 +510,7 @@ class CalendarRepository:
             if completed:
                 connection.execute(
                     """
-                    INSERT INTO pie_occurrence_checklist (
+                    INSERT INTO concretos_pie_occurrence_checklist (
                         plan_id, occurrence_start, day_number, completed_at
                     ) VALUES (?, ?, ?, ?)
                     ON CONFLICT(plan_id, occurrence_start, day_number) DO UPDATE SET
@@ -524,7 +526,7 @@ class CalendarRepository:
             else:
                 connection.execute(
                     """
-                    DELETE FROM pie_occurrence_checklist
+                    DELETE FROM concretos_pie_occurrence_checklist
                     WHERE plan_id = ? AND occurrence_start = ? AND day_number = ?
                     """,
                     (plan_id, occurrence_start.isoformat(), day_number),
@@ -570,7 +572,7 @@ class CalendarRepository:
     ) -> PieInspectionPlan:
         step_rows = connection.execute(
             """
-            SELECT description FROM pie_inspection_steps
+            SELECT description FROM concretos_pie_inspection_steps
             WHERE plan_id = ? ORDER BY day_number
             """,
             (int(row["id"]),),

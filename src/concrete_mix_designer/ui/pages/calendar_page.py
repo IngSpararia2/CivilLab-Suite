@@ -34,7 +34,6 @@ from concrete_mix_designer.domain.pie_models import PieOccurrence
 from concrete_mix_designer.services.app_state import AppState
 from concrete_mix_designer.ui.dialogs.pie_dialog import PiePlanDialog
 
-
 MONTH_NAMES = (
     "enero",
     "febrero",

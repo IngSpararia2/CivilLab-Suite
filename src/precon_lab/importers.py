@@ -2,22 +2,21 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
-from .historical_codes import build_production_code, build_test_code, derive_product_code
+
 import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
+from .historical_codes import build_production_code, build_test_code, derive_product_code
 from .models import (
     HistoricalSpecimen,
     HistoricalTest,
     ImportBatch,
-    Product,
     ProductionBatch,
     SampleSet,
     TestResult,

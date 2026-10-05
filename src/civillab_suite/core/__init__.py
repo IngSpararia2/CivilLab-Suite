@@ -1,3 +1,3 @@
-from .database import CoreDatabase, CatalogSyncResult
+from .database import CatalogSyncResult, CoreDatabase
 
 __all__ = ["CatalogSyncResult", "CoreDatabase"]

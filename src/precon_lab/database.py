@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from datetime import timedelta
 from typing import Iterator
 
-from sqlalchemy import create_engine, or_, select, text
+from sqlalchemy import create_engine, event, or_, select, text
 from sqlalchemy import inspect as sqlalchemy_inspect
 from sqlalchemy.orm import Session, joinedload, sessionmaker
 
@@ -20,8 +20,39 @@ _SessionFactory = None
 def get_engine():
     global _engine
     if _engine is None:
-        _engine = create_engine(database_url(), future=True)
+        _engine = _make_engine(database_url())
     return _engine
+
+
+def _make_engine(url):
+    engine = create_engine(url, future=True)
+
+    @event.listens_for(engine, "connect")
+    def configure(dbapi_connection, _record):
+        dbapi_connection.execute("PRAGMA foreign_keys=ON")
+        dbapi_connection.execute("PRAGMA busy_timeout=10000")
+
+    return engine
+
+
+def use_database(path) -> None:
+    global _engine
+    if _engine is not None and _engine.url.database == str(path):
+        return
+    dispose_database_connections()
+    _engine = _make_engine(f"sqlite:///{path.as_posix()}")
+
+
+def initialize_at(path, *, seed_products=False) -> None:
+    """Initialize a staging database without redirecting an active workspace."""
+    global _engine, _SessionFactory
+    previous_engine, previous_factory = _engine, _SessionFactory
+    _engine, _SessionFactory = _make_engine(f"sqlite:///{path.as_posix()}"), None
+    try:
+        initialize_database(seed_products=seed_products)
+    finally:
+        dispose_database_connections()
+        _engine, _SessionFactory = previous_engine, previous_factory
 
 
 def get_session_factory():
@@ -68,25 +99,25 @@ def _ensure_historical_browser_columns() -> None:
     """
     engine = get_engine()
     inspector = sqlalchemy_inspect(engine)
-    if "historical_tests" not in inspector.get_table_names():
+    if "prefabricados_historical_tests" not in inspector.get_table_names():
         return
 
-    columns = {item["name"] for item in inspector.get_columns("historical_tests")}
+    columns = {item["name"] for item in inspector.get_columns("prefabricados_historical_tests")}
     statements: list[str] = []
 
     if "product_code" not in columns:
         statements.append(
-            "ALTER TABLE historical_tests "
+            "ALTER TABLE prefabricados_historical_tests "
             "ADD COLUMN product_code VARCHAR(160) NOT NULL DEFAULT ''"
         )
     if "production_code" not in columns:
         statements.append(
-            "ALTER TABLE historical_tests "
+            "ALTER TABLE prefabricados_historical_tests "
             "ADD COLUMN production_code VARCHAR(220) NOT NULL DEFAULT ''"
         )
     if "test_code" not in columns:
         statements.append(
-            "ALTER TABLE historical_tests "
+            "ALTER TABLE prefabricados_historical_tests "
             "ADD COLUMN test_code VARCHAR(220) NOT NULL DEFAULT ''"
         )
 
@@ -96,19 +127,19 @@ def _ensure_historical_browser_columns() -> None:
         connection.execute(
             text(
                 "CREATE INDEX IF NOT EXISTS ix_historical_tests_product_code "
-                "ON historical_tests (product_code)"
+                "ON prefabricados_historical_tests (product_code)"
             )
         )
         connection.execute(
             text(
                 "CREATE INDEX IF NOT EXISTS ix_historical_tests_production_code "
-                "ON historical_tests (production_code)"
+                "ON prefabricados_historical_tests (production_code)"
             )
         )
         connection.execute(
             text(
                 "CREATE INDEX IF NOT EXISTS ix_historical_tests_test_code "
-                "ON historical_tests (test_code)"
+                "ON prefabricados_historical_tests (test_code)"
             )
         )
 
@@ -117,15 +148,15 @@ def _ensure_inspection_catalog_columns() -> None:
     """Migración SQLite ligera para detalles por material y ensayo."""
     engine = get_engine()
     inspector = sqlalchemy_inspect(engine)
-    if "test_applicabilities" not in inspector.get_table_names():
+    if "prefabricados_test_applicabilities" not in inspector.get_table_names():
         return
 
-    columns = {item["name"] for item in inspector.get_columns("test_applicabilities")}
+    columns = {item["name"] for item in inspector.get_columns("prefabricados_test_applicabilities")}
     if "procedure_detail" not in columns:
         with engine.begin() as connection:
             connection.execute(
                 text(
-                    "ALTER TABLE test_applicabilities "
+                    "ALTER TABLE prefabricados_test_applicabilities "
                     "ADD COLUMN procedure_detail TEXT NOT NULL DEFAULT ''"
                 )
             )
@@ -169,12 +200,13 @@ def _backfill_historical_codes() -> None:
             )
 
 
-def initialize_database() -> None:
+def initialize_database(*, seed_products=True) -> None:
     Base.metadata.create_all(get_engine())
     _ensure_historical_browser_columns()
     _ensure_inspection_catalog_columns()
     _backfill_historical_codes()
-    seed_default_products()
+    if seed_products:
+        seed_default_products()
     with session_scope() as session:
         seed_inspection_catalog(session)
 

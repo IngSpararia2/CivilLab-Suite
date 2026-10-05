@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from civillab_suite.config import core_database_path
 
 APP_NAME = "Concretos Lab"
 APP_VERSION = "0.9.1"
@@ -26,4 +27,6 @@ def user_data_dir() -> Path:
 
 # The existing materials table and the new design/production/laboratory tables
 # share one local SQLite database. Existing installations are upgraded in place.
-DATABASE_PATH = user_data_dir() / "materials.sqlite3"
+
+LEGACY_DATABASE_PATH = user_data_dir() / "materials.sqlite3"
+DATABASE_PATH = core_database_path()

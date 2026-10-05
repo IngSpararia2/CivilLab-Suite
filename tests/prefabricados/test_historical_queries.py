@@ -1,7 +1,5 @@
 from datetime import date
 
-from sqlalchemy import select
-
 from precon_lab.historical_queries import HistoricalFilters, query_historical_groups
 from precon_lab.models import HistoricalSpecimen, HistoricalTest, ImportBatch
 

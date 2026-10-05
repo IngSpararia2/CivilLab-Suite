@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-
 APP_NAME = "CivilLab Suite"
 APP_VERSION = "0.1.0"
 

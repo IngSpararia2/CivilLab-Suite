@@ -76,7 +76,30 @@ class DashboardPage(QWidget):
         self.air_entrained_check = QCheckBox("Con aire incluido")
 
         form = QFormLayout()
-        form.addRow("Resistencia esperada f'c:", fc_widget)
+        form.addRow("Resistencia especificada f'c:", fc_widget)
+        self.strength_mode = QComboBox()
+        self.strength_mode.addItems(["Sin historial", "Historial estadístico"])
+        self.strength_series = QComboBox()
+        self.strength_age = self._spin(1, 365, 1, " días")
+        self.strength_age.setValue(28)
+        self.comparable = QCheckBox("Confirmo materiales y condiciones comparables; curado estándar")
+        self.strength_summary = QLabel("f'cr: pendiente de cálculo")
+        self.strength_summary.setWordWrap(True)
+        form.addRow("Base de resistencia:", self.strength_mode)
+        form.addRow("Serie (una revisión):", self.strength_series)
+        form.addRow("Edad de resistencia:", self.strength_age)
+        form.addRow(self.comparable)
+        form.addRow(self.strength_summary)
+        def refresh_series():
+            selected = self.strength_series.currentData()
+            self.strength_series.clear()
+            for record in state.saved_designs:
+                self.strength_series.addItem(f"{record.name} · revisión {record.revision}", record.id)
+            index = self.strength_series.findData(selected)
+            if index >= 0:
+                self.strength_series.setCurrentIndex(index)
+        state.library_changed.connect(refresh_series)
+        refresh_series()
         form.addRow("Asentamiento deseado:", slump_widget)
         form.addRow("Tamaño máximo nominal:", self.nms_combo)
         form.addRow("Exposición:", self.air_entrained_check)
@@ -128,6 +151,14 @@ class DashboardPage(QWidget):
         layout.addWidget(result_card)
         layout.addStretch()
 
+        for control in (self.fc_spin,self.slump_spin,self.strength_age):
+            control.valueChanged.connect(self._invalidate_suggestion)
+        for control in (self.strength_mode,self.strength_series,self.nms_combo):
+            control.currentIndexChanged.connect(self._invalidate_suggestion)
+        self.comparable.toggled.connect(self._invalidate_suggestion)
+        self.air_entrained_check.toggled.connect(self._invalidate_suggestion)
+        self.strength_mode.currentIndexChanged.connect(self._strength_controls)
+        self._strength_controls()
         state.design_changed.connect(self.refresh)
         self.refresh()
 
@@ -218,6 +249,17 @@ class DashboardPage(QWidget):
         self._refreshing = True
         try:
             params = self.state.design.parameters
+            basis = params.strength_basis_snapshot
+            if basis:
+                self.strength_mode.setCurrentIndex(int(basis.get('mode')=='statistical'))
+                self.strength_age.setValue(basis.get('age_days',28))
+                self.comparable.setChecked(basis.get('comparable',False))
+                index = self.strength_series.findData(basis.get('series_id'))
+                if index >= 0:
+                    self.strength_series.setCurrentIndex(index)
+                self._show_strength_basis(basis)
+            else:
+                self.strength_summary.setText("Sin base documentada de f'cr. Los datos históricos no se reinterpretan.")
             fc_unit = str(self.fc_unit.currentData())
             self.fc_spin.blockSignals(True)
             self.fc_spin.setValue(mpa_to_pressure(params.fc_mpa, fc_unit))
@@ -235,15 +277,62 @@ class DashboardPage(QWidget):
             self._refreshing = False
 
     def _calculate_suggestion(self) -> None:
-        self.state.design.parameters.fc_mpa = self._fc_mpa()
-        self.state.design.parameters.slump_mm = self._slump_mm()
-        self.state.design.parameters.nominal_max_size_mm = float(self.nms_combo.currentData())
+        fc = self._fc_mpa()
+        from concrete_mix_designer.domain.strength import PSI_MPA, required_strength
+        params = self.state.design.parameters
+        try:
+            statistical = self.strength_mode.currentIndex() == 1
+            series_id = self.strength_series.currentData() if statistical else None
+            tests = None
+            if statistical:
+                record = self.state.laboratory_repository.get_design(series_id) if series_id else None
+                if record is None:
+                    raise ValueError("Selecciona una serie histórica.")
+                historical = self.state.laboratory_repository.load_mix_design(series_id)
+                if abs(historical.parameters.fc_mpa - fc) > 1000 * PSI_MPA:
+                    raise ValueError("La resistencia especificada de la serie difiere en más de 1000 psi.")
+                tests = self.state.laboratory_repository.strength_tests(series_id, self.strength_age.value())
+            basis = required_strength(fc, tests=tests, series_id=series_id,
+                                      age_days=self.strength_age.value(), comparable=self.comparable.isChecked())
+            if statistical:
+                basis.update(series_name=record.name,source_fc_mpa=historical.parameters.fc_mpa)
+            params.fc_mpa = fc
+            params.slump_mm = self._slump_mm()
+            params.nominal_max_size_mm = float(self.nms_combo.currentData())
+            params.fcr_mpa = basis['fcr_mpa']
+            params.strength_basis_snapshot = basis
+            self._show_strength_basis(basis)
+        except ValueError as error:
+            self.apply_button.setEnabled(False)
+            self._suggestion = None
+            n = len(tests) if tests is not None else 0
+            self.strength_summary.setText(f"N={n} · {error}")
+            return
         self._suggestion = self.state.get_suggestion(self.air_entrained_check.isChecked())
         self.water_value.setText(f"{self._suggestion.water_kg_m3:.1f} kg/m³")
         self.ratio_value.setText(f"{self._suggestion.w_cm:.3f}")
         self.air_value.setText(f"{self._suggestion.air_pct:.1f} %")
         self.note_label.setText(self._suggestion.note)
         self.apply_button.setEnabled(True)
+
+    def _show_strength_basis(self, basis):
+        def number(value):
+            return f"{value:.3f}" if value is not None else "—"
+        self.strength_summary.setText(
+            f"f'c={basis['fc_mpa']:.2f} MPa · f'cr={basis['fcr_mpa']:.2f} MPa · N={basis['n']}\n"
+            f"media={number(basis['mean_mpa'])} MPa · s={number(basis['s_mpa'])} MPa · factor={number(basis['factor'])}\n"
+            f"Serie: {basis.get('series_name',basis.get('series_id') or 'Sin historial')} · Edad={basis['age_days']:g} d\n"
+            f"Periodo: {basis.get('from_date','—')} / {basis.get('to_date','—')}\n{basis['standard']}")
+
+    def _invalidate_suggestion(self, *_args):
+        self._suggestion = None
+        self.apply_button.setEnabled(False)
+
+    def _strength_controls(self, *_args):
+        statistical = self.strength_mode.currentIndex()==1
+        self.strength_series.setEnabled(statistical)
+        self.strength_age.setEnabled(statistical)
+        self.comparable.setEnabled(statistical)
 
     def _apply_suggestion(self) -> None:
         if self._suggestion is not None:

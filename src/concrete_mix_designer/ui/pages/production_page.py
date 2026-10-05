@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -15,9 +17,9 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSplitter,
-    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -413,6 +415,12 @@ class ProductionPage(QWidget):
             f"Muestras ensayadas: {production.tested_specimen_count}/{production.specimen_count}\n"
             f"{production.notes or 'Sin observaciones.'}"
         )
+        snapshot = json.loads(production.design_json_snapshot)
+        humidities = snapshot.get('batch_moistures',{})
+        moisture_text = [f"{row['material']['name']}: {humidities[row['uid']]:g}%"
+                         for row in snapshot.get('components',[]) if row['uid'] in humidities]
+        self.production_summary.setText(self.production_summary.text()+"\nHumedades guardadas: "+
+                                        (" · ".join(moisture_text) or "Sin medición por amasada (registro legacy o sin agregados)"))
         self._refresh_fresh_tests(production.id)
         self._refresh_specimens(production.id)
 

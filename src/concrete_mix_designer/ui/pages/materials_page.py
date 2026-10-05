@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from concrete_mix_designer.domain.metadata_models import MaterialCharacterization
 from concrete_mix_designer.domain.models import CATEGORY_LABELS, MaterialCategory
 from concrete_mix_designer.services.app_state import AppState
 from concrete_mix_designer.ui.dialogs.material_dialog import MaterialDialog
@@ -42,7 +43,7 @@ class MaterialsPage(QWidget):
                 "G.E. cálculo",
                 "G.E. seca / SSS",
                 "Absorción %",
-                "Humedad %",
+                "Humedad legacy %",
                 "MF / MUC",
                 "Granulometría",
                 "Origen",
@@ -90,10 +91,13 @@ class MaterialsPage(QWidget):
         self.refresh()
 
     def refresh(self) -> None:
+        selected = self._selected_material()
+        selected_id = selected.id if selected else None
+        characterizations = self.state.repository.list_characterizations()
         self._materials = self.state.materials
         self.table.setRowCount(len(self._materials))
         for row, material in enumerate(self._materials):
-            characterization = self.state.get_material_characterization(material.id)
+            characterization = characterizations.get(material.id, MaterialCharacterization(material_id=material.id))
             sg_pair = "—"
             if characterization.specific_gravity_dry is not None or characterization.specific_gravity_ssd is not None:
                 dry = (
@@ -141,6 +145,8 @@ class MaterialsPage(QWidget):
                 if column == 0:
                     item.setData(Qt.UserRole, material.id)
                 self.table.setItem(row, column, item)
+            if material.id == selected_id:
+                self.table.selectRow(row)
 
     def _selected_material(self):
         row = self.table.currentRow()

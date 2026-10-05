@@ -59,7 +59,7 @@ def _linear_interpolation(x: float, points: list[tuple[float, float]]) -> float:
         return points[0][1]
     if x >= points[-1][0]:
         return points[-1][1]
-    for (x0, y0), (x1, y1) in zip(points, points[1:]):
+    for (x0, y0), (x1, y1) in zip(points, points[1:], strict=False):
         if x0 <= x <= x1:
             factor = (x - x0) / (x1 - x0)
             return y0 + factor * (y1 - y0)

@@ -81,6 +81,7 @@ def test_workspace_disables_only_active_relation_numerator(tmp_path, monkeypatch
     from concrete_mix_designer.ui.pages.workspace_page import WorkspacePage
 
     state = AppState(MaterialRepository(tmp_path / "workspace.sqlite3"))
+    state.design.parameters.w_cm_locked = False  # Isolate the custom-relation control.
     constraint = state.design.ratio_constraints[0]
     state.update_ratio_constraint(constraint.uid, constraint.target_ratio, True)
     app = QApplication.instance() or QApplication([])

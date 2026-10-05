@@ -196,6 +196,8 @@ class AppState(QObject):
         component = self.design.component(uid)
         if component is None:
             return
+        if uid in self.design.controlled_reasons:
+            return
         component.quantity = value
         self._after_edit(changed_uid=uid)
 
@@ -389,7 +391,7 @@ class AppState(QObject):
     def get_suggestion(self, air_entrained: bool) -> AciSuggestion:
         params = self.design.parameters
         return suggest_initial_values(
-            params.fc_mpa,
+            params.fcr_mpa if params.fcr_mpa is not None else params.fc_mpa,
             params.slump_mm,
             params.nominal_max_size_mm,
             air_entrained,
@@ -612,6 +614,7 @@ class AppState(QObject):
         batch_volume_m3: float,
         notes: str,
         schedules: list[tuple[SpecimenType, float, int]],
+        batch_moistures: dict[str, float] | None = None,
     ) -> ProductionRecord:
         production = self.laboratory_repository.create_production(
             design_id=design_id,
@@ -620,6 +623,7 @@ class AppState(QObject):
             batch_volume_m3=batch_volume_m3,
             notes=notes,
             schedules=schedules,
+            batch_moistures=batch_moistures,
         )
         self.productions_changed.emit()
         self.library_changed.emit()

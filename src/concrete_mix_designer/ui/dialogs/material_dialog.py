@@ -61,6 +61,10 @@ class MaterialDialog(QDialog):
         self.resize(720, 780)
 
         self.name_edit = QLineEdit()
+        self.code_edit = QLineEdit(material.code if material else "")
+        self.code_edit.setPlaceholderText("Código compartido; vacío para generar uno")
+        self.code_edit.setReadOnly(material is not None)
+        self.code_edit.setToolTip("Un código existente de la misma categoría referencia la identidad de Core.")
         self.category_combo = QComboBox()
         for category, label in CATEGORY_LABELS.items():
             self.category_combo.addItem(label, category)
@@ -82,11 +86,14 @@ class MaterialDialog(QDialog):
 
         basic_group = QGroupBox("Identificación y propiedades usadas en el cálculo")
         basic_form = QFormLayout(basic_group)
+        basic_form.addRow("Código canónico:", self.code_edit)
         basic_form.addRow("Nombre:*", self.name_edit)
         basic_form.addRow("Categoría:*", self.category_combo)
-        basic_form.addRow("Gravedad específica de cálculo:*", self.sg_spin)
+        basic_form.addRow("G.E. cálculo (SSD en agregados):*", self.sg_spin)
         basic_form.addRow("Absorción:", self.absorption_spin)
-        basic_form.addRow("Humedad total:", self.moisture_spin)
+        basic_form.addRow("Humedad legacy (solo referencia):", self.moisture_spin)
+        self.moisture_spin.setReadOnly(True)
+        self.moisture_spin.setToolTip("Introduce la humedad actual en Dosificación o al registrar cada producción.")
 
         self.supplier_edit = QLineEdit()
         self.source_edit = QLineEdit()
@@ -101,6 +108,9 @@ class MaterialDialog(QDialog):
 
         self.sg_dry = _optional_spin(10.0, 4)
         self.sg_ssd = _optional_spin(10.0, 4)
+        self.sg_ssd.setToolTip("Base SSD usada para el cálculo; actualiza la G.E. de cálculo.")
+        self.sg_ssd.valueChanged.connect(lambda value: self.sg_spin.setValue(value) if value>0 and self.category in (MaterialCategory.FINE_AGGREGATE,MaterialCategory.COARSE_AGGREGATE) else None)
+        self.sg_spin.valueChanged.connect(lambda value: self.sg_ssd.setValue(value) if self.category in (MaterialCategory.FINE_AGGREGATE,MaterialCategory.COARSE_AGGREGATE) else None)
         self.compacted_unit_weight = _optional_spin(5000.0, 1, " kg/m³")
         self.fineness_modulus = _optional_spin(10.0, 2)
         self.nominal_max_size = _optional_spin(200.0, 2, " mm")
@@ -289,6 +299,8 @@ class MaterialDialog(QDialog):
             ),
             dosage_value=self.material.dosage_value if self.material else 0.0,
             is_seed=self.material.is_seed if self.material else False,
+            canonical_id=self.material.canonical_id if self.material else None,
+            code=self.code_edit.text().strip(),
         )
 
     @property

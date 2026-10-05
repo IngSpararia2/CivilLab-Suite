@@ -9,7 +9,6 @@ from typing import Iterable
 
 from .database import CoreDatabase, _normalized
 
-
 CATALOG_SEED_KEY = "civillab_catalog"
 CATALOG_SEED_VERSION = 2
 

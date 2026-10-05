@@ -352,6 +352,7 @@ def test_legacy_hidden_parameters_are_migrated_to_visible_constraints():
     legacy = MixDesign(components=[legacy_cement, legacy_ash, MixComponent(legacy_sp_material, 0.0)])
     payload = legacy.to_dict()
     payload["ratio_constraints"] = []
+    payload.pop("format_version", None)  # Emulate the unversioned legacy JSON.
     restored = MixDesign.from_dict(payload)
 
     modes = {constraint.mode for constraint in restored.ratio_constraints}

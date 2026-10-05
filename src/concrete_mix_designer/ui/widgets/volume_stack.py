@@ -6,7 +6,6 @@ from PySide6.QtWidgets import QWidget
 
 from concrete_mix_designer.domain.models import MaterialCategory, MixDesign
 
-
 CATEGORY_COLORS = {
     MaterialCategory.WATER: QColor("#4ea5d9"),
     MaterialCategory.CEMENTITIOUS: QColor("#9aa4ad"),

@@ -25,7 +25,6 @@ from concrete_mix_designer.domain.models import (
 )
 from concrete_mix_designer.services.report_preferences import ReportPreferences
 
-
 PAGE_WIDTH, PAGE_HEIGHT = A4
 MARGIN_X = 14 * mm
 CONTENT_WIDTH = PAGE_WIDTH - 2 * MARGIN_X
@@ -176,12 +175,18 @@ def _draw_laboratory_page(
             f"{batch_volume_m3:.4f} m³",
         ],
     ]
+    basis = design.parameters.strength_basis_snapshot
+    if design.parameters.fcr_mpa is not None:
+        summary.append(["f'c especificado", f"{design.parameters.fc_mpa:.2f} MPa",
+                        "f'cr requerido", f"{design.parameters.fcr_mpa:.2f} MPa"])
+        summary.append(["Base de resistencia", basis.get('mode','Sin documentar'),
+                        "N / s / factor", f"{basis.get('n','—')} / {basis.get('s_mpa','—')} / {basis.get('factor','—')}"])
     y = _draw_table(
         pdf,
         summary,
         [37 * mm, 55 * mm, 40 * mm, 51 * mm],
         y,
-        max_height=40 * mm,
+        max_height=50 * mm,
         header_rows=0,
         font_size=7.4,
         label_columns={0, 2},
@@ -199,7 +204,7 @@ def _draw_laboratory_page(
                 CATEGORY_LABELS.get(component.category, str(component.category)),
                 f"{component.material.specific_gravity:.3f}",
                 f"{component.material.absorption_pct:.2f}",
-                f"{component.material.moisture_pct:.2f}",
+                f"{design.batch_moistures.get(component.uid, component.material.moisture_pct):.2f}",
                 f"{component.quantity:.3f} {component.unit}",
                 f"{corrected:.3f} {component.unit}",
                 f"{corrected * batch_volume_m3:.3f} {component.unit}",
@@ -273,7 +278,7 @@ def _draw_laboratory_page(
                     f"{record.average_mpa:.3f} MPa",
                     f"{record.minimum_mpa:.3f} MPa",
                     f"{record.maximum_mpa:.3f} MPa",
-                    f"{record.standard_deviation_mpa:.3f} MPa",
+                    (f"{record.standard_deviation_mpa:.3f} MPa" if record.standard_deviation_mpa is not None else "No estimable (N < 2)"),
                 ]
             )
         _draw_table(

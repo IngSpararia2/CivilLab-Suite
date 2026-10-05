@@ -393,7 +393,7 @@ class DesignLibraryPage(QWidget):
                 f"{row.average_mpa:.3f} MPa",
                 (
                     f"{row.minimum_mpa:.3f} – {row.maximum_mpa:.3f} MPa\n"
-                    f"σ = {row.standard_deviation_mpa:.3f} MPa"
+                    f"s = {row.standard_deviation_mpa if row.standard_deviation_mpa is not None else 'no estimable'} MPa"
                 ),
             ]
             for column, value in enumerate(values):

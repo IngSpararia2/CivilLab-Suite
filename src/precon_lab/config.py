@@ -21,6 +21,11 @@ def data_dir() -> Path:
 
 
 def database_path() -> Path:
+    from civillab_suite.config import core_database_path
+    return legacy_database_path() if os.getenv("PRECON_LAB_DATA_DIR") else core_database_path()
+
+
+def legacy_database_path() -> Path:
     return data_dir() / "precon_lab.db"
 
 

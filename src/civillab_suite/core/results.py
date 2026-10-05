@@ -6,7 +6,6 @@ from datetime import date, datetime, timedelta, timezone
 from .database import CoreDatabase
 from .pie import PiePlan, PieService
 
-
 ACCEPTABLE_RESULT_STATUSES = frozenset({"VALID", "APPROVED", "ACCEPTED", "FINAL"})
 
 
@@ -59,6 +58,10 @@ class SharedResultService:
             raise ValueError("El tipo y el identificador del registro fuente son obligatorios.")
         now = datetime.now(timezone.utc).isoformat()
         with self.database.connect() as connection:
+            if method_id is not None:
+                method = connection.execute("SELECT assay_id FROM assay_methods WHERE id=?",(method_id,)).fetchone()
+                if method is None or method['assay_id'] != assay_id:
+                    raise ValueError("El método no pertenece al ensayo seleccionado.")
             connection.execute(
                 """
                 INSERT INTO shared_results (
@@ -89,6 +92,9 @@ class SharedResultService:
                 """,
                 (origin_module_id, source_type.strip(), source_id.strip()),
             ).fetchone()
+            # Re-registration may invalidate identity/date/status of previous matches.
+            if row is not None:
+                connection.execute("DELETE FROM pie_result_satisfactions WHERE result_id=?", (row["id"],))
         assert row is not None
         return self._row(row)
 

@@ -78,9 +78,9 @@ def test_pie_plan_crud_steps_and_cascade_are_atomic(tmp_path):
     assert repository.delete_pie_plan(updated.id)
     assert repository.list_pie_plans() == []
     with sqlite3.connect(database) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM pie_inspection_steps").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM concretos_pie_inspection_steps").fetchone()[0] == 0
         checklist_count = connection.execute(
-            "SELECT COUNT(*) FROM pie_occurrence_checklist"
+            "SELECT COUNT(*) FROM concretos_pie_occurrence_checklist"
         ).fetchone()[0]
         assert checklist_count == 0
 
@@ -100,7 +100,7 @@ def test_pie_daily_projection_only_builds_requested_range(tmp_path):
     with sqlite3.connect(database) as connection:
         # Recurrences are projections, not thousands of materialized event rows.
         checklist_count = connection.execute(
-            "SELECT COUNT(*) FROM pie_occurrence_checklist"
+            "SELECT COUNT(*) FROM concretos_pie_occurrence_checklist"
         ).fetchone()[0]
         assert checklist_count == 0
 
@@ -192,7 +192,7 @@ def test_pie_edit_keeps_valid_checks_and_prunes_orphaned_schedule_rows(tmp_path)
     repository.save_pie_plan(saved)
     with sqlite3.connect(database) as connection:
         checklist_count = connection.execute(
-            "SELECT COUNT(*) FROM pie_occurrence_checklist"
+            "SELECT COUNT(*) FROM concretos_pie_occurrence_checklist"
         ).fetchone()[0]
         assert checklist_count == 0
 

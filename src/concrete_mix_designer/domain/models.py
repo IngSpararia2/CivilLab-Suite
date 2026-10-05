@@ -74,6 +74,8 @@ class Material:
     dosage_mode: DosageMode = DosageMode.MANUAL_KG
     dosage_value: float = 0.0
     is_seed: bool = False
+    canonical_id: int | None = None
+    code: str = ""
 
     @property
     def density_kg_l(self) -> float:
@@ -153,6 +155,8 @@ class MixParameters:
     target_w_cm: float = 0.50
     w_cm_locked: bool = True
     target_volume_l: float = 1000.0
+    fcr_mpa: float | None = None
+    strength_basis_snapshot: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -161,6 +165,7 @@ class MixDesign:
     components: list[MixComponent] = field(default_factory=list)
     ratio_constraints: list[RatioConstraint] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    batch_moistures: dict[str, float] = field(default_factory=dict)
 
     def enabled_components(self) -> list[MixComponent]:
         return [component for component in self.components if component.enabled]
@@ -186,6 +191,24 @@ class MixDesign:
             for constraint in self.ratio_constraints
             if constraint.enabled
         }
+
+    @property
+    def controlled_reasons(self) -> dict[str, str]:
+        active = {c.uid for c in self.enabled_components()}
+        reasons = {
+            r.numerator_uid: f"Relación: {r.name or r.mode.value}"
+            for r in self.ratio_constraints
+            if r.enabled and r.numerator_uid in active
+            and (not r.requires_denominator or r.denominator_uid in active)
+        }
+        if self.parameters.w_cm_locked:
+            waters = self.by_category(MaterialCategory.WATER)
+            cements = self.by_category(MaterialCategory.CEMENTITIOUS)
+            dependent = cements if waters and all(c.locked for c in waters) else waters
+            for component in dependent:
+                if not component.locked:
+                    reasons.setdefault(component.uid, "Relación a/mc bloqueada")
+        return reasons
 
     @property
     def total_absolute_volume_l(self) -> float:
@@ -218,6 +241,8 @@ class MixDesign:
             row["mode"] = constraint.mode.value
             constraints.append(row)
         return {
+            "format_version": 2,
+            "batch_moistures": dict(self.batch_moistures),
             "parameters": asdict(self.parameters),
             "ratio_constraints": constraints,
             "components": [
@@ -239,6 +264,8 @@ class MixDesign:
                         "dosage_mode": component.material.dosage_mode.value,
                         "dosage_value": component.material.dosage_value,
                         "is_seed": component.material.is_seed,
+                        "canonical_id": component.material.canonical_id,
+                        "code": component.material.code,
                     },
                 }
                 for component in self.components
@@ -265,6 +292,8 @@ class MixDesign:
             target_volume_l=_finite_float(
                 parameter_data.get("target_volume_l", 1000.0), "El volumen objetivo"
             ),
+            fcr_mpa=_optional_finite_float(parameter_data.get("fcr_mpa"), "f'cr"),
+            strength_basis_snapshot=dict(parameter_data.get("strength_basis_snapshot", {})),
         )
         components: list[MixComponent] = []
         for row in payload.get("components", []):
@@ -287,6 +316,8 @@ class MixDesign:
                     material_data.get("dosage_value", 0.0), "La dosificación"
                 ),
                 is_seed=bool(material_data.get("is_seed", False)),
+                canonical_id=material_data.get("canonical_id"),
+                code=str(material_data.get("code", "")),
             )
             mode_value = row.get("dosage_mode")
             components.append(
@@ -326,7 +357,12 @@ class MixDesign:
             )
 
         design = cls(parameters=params, components=components, ratio_constraints=constraints)
-        design._migrate_legacy_parameters()
+        design.batch_moistures = {
+            str(uid): _finite_float(value, "La humedad de amasada")
+            for uid, value in payload.get("batch_moistures", {}).items()
+        }
+        if payload.get("format_version", 1) < 2:
+            design._migrate_legacy_parameters()
         return design
 
     def _migrate_legacy_parameters(self) -> None:

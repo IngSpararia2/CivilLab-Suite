@@ -124,8 +124,8 @@ def test_calendar_month_query_and_cascade_cleanup(tmp_path):
 
     with sqlite3.connect(database) as connection:
         connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("DELETE FROM specimens WHERE id = 10")
+        connection.execute("DELETE FROM concretos_specimens WHERE id = 10")
         remaining = connection.execute(
-            "SELECT COUNT(*) FROM specimen_checklist WHERE specimen_id = 10"
+            "SELECT COUNT(*) FROM concretos_specimen_checklist WHERE specimen_id = 10"
         ).fetchone()[0]
     assert remaining == 0

@@ -138,6 +138,7 @@ class ProductionDialog(QDialog):
         selected_design_id: int | None = None,
         initial_batch_volume_m3: float = 1.0,
         lock_design: bool = False,
+        initial_moistures: dict[str, float] | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -171,6 +172,19 @@ class ProductionDialog(QDialog):
         self.notes.setMaximumHeight(90)
         self.notes.setPlaceholderText("Lote de materiales, operador, ubicación, incidencias u observaciones.")
 
+        import json
+
+        from concrete_mix_designer.domain.models import MixDesign
+        from concrete_mix_designer.ui.moisture_widget import MoistureWidget
+        self.moistures = MoistureWidget()
+        def update_moistures():
+            record = next((d for d in designs if d.id == self.design_combo.currentData()), None)
+            mix = MixDesign.from_dict(json.loads(record.design_json)) if record else None
+            if mix is not None and initial_moistures is not None and record.id == selected_design_id:
+                mix.batch_moistures = dict(initial_moistures)
+            self.moistures.set_design(mix)
+        self.design_combo.currentIndexChanged.connect(update_moistures)
+        update_moistures()
         form = QFormLayout()
         form.addRow("Diseño guardado:*", self.design_combo)
         form.addRow("Fecha y hora de fabricación:*", self.produced_at)
@@ -195,6 +209,7 @@ class ProductionDialog(QDialog):
 
         layout = QVBoxLayout(self)
         layout.addLayout(form)
+        layout.addWidget(self.moistures)
         layout.addWidget(schedule_group, 1)
         layout.addWidget(buttons)
 
@@ -207,6 +222,7 @@ class ProductionDialog(QDialog):
     @property
     def values(self) -> dict[str, object]:
         return {
+            "batch_moistures": self.moistures.values(),
             "design_id": int(self.design_combo.currentData()),
             "produced_at": _date_time_value(self.produced_at),
             "batch_code": self.batch_code.text().strip(),

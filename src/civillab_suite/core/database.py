@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable
 
+from civillab_suite.sqlite_support import connect as sqlite_connect
+
 if TYPE_CHECKING:
     from civillab_suite.registry import ModuleDescriptor
 
@@ -42,7 +44,7 @@ class CoreDatabase:
 
     def connect(self) -> sqlite3.Connection:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(self.path)
+        connection = sqlite_connect(self.path)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 5000")
@@ -440,7 +442,8 @@ class CoreDatabase:
         if not source_path.is_file():
             return CatalogSyncResult(0, 0, 0, "")
 
-        source = sqlite3.connect(f"file:{source_path.as_posix()}?mode=ro", uri=True)
+        from civillab_suite.storage import legacy_reader
+        source = legacy_reader(source_path, "prefabricados")
         source.row_factory = sqlite3.Row
         try:
             required = {
@@ -449,7 +452,7 @@ class CoreDatabase:
             }
             existing = {
                 row[0]
-                for row in source.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+                for row in source.execute("SELECT name FROM sqlite_master WHERE type = 'table' UNION SELECT name FROM sqlite_temp_master WHERE type = 'view'")
             }
             if not required.issubset(existing):
                 return CatalogSyncResult(0, 0, 0, "")

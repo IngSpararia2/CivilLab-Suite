@@ -5,7 +5,14 @@ from __future__ import annotations
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from .models import InspectionPlanEntry, LaboratoryTest, MaterialType, StandardReference, TestApplicability, TestRequirement
+from .models import (
+    InspectionPlanEntry,
+    LaboratoryTest,
+    MaterialType,
+    StandardReference,
+    TestApplicability,
+    TestRequirement,
+)
 
 VERIFIED_ATTACHED = "VERIFIED_ATTACHED"
 PUBLIC_OFFICIAL_DERIVED = "PUBLIC_OFFICIAL_DERIVED"
@@ -383,7 +390,7 @@ def _upsert_standards(session: Session) -> dict[str, StandardReference]:
             item = StandardReference(code=code)
             session.add(item)
             existing[code] = item
-        for field, value in zip(fields, values):
+        for field, value in zip(fields, values, strict=True):
             setattr(item, field, value)
     session.flush()
     return existing
@@ -512,7 +519,7 @@ def _upsert_requirements(session, materials, standards, tests) -> None:
             item = TestRequirement(seed_key=key)
             session.add(item)
         item.material_type, item.laboratory_test, item.standard = materials[material], tests[test], standards[standard]
-        for field, value in zip(fields, values):
+        for field, value in zip(fields, values, strict=True):
             setattr(item, field, value)
 
 

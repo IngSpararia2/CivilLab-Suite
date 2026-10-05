@@ -2,7 +2,7 @@ from datetime import date, timedelta
 
 from sqlalchemy import select
 
-from precon_lab.models import Product, SampleSet, WorkflowTask
+from precon_lab.models import Product, SampleSet
 from precon_lab.services import create_production, reprogram_sample_set
 
 

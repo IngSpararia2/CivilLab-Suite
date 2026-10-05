@@ -68,9 +68,7 @@ def test_design_versions_production_and_results(tmp_path):
     assert result.strength_mpa == pytest.approx(22.918, rel=1e-3)
 
     stats = repository.design_statistics(revision_2.id)
-    assert len(stats) == 1
-    assert stats[0].result_count == 1
-    assert stats[0].average_mpa == pytest.approx(result.strength_mpa)
+    assert stats == []  # A single cylinder in an incomplete sample is not a strength test.
 
 
 def test_production_keeps_immutable_design_snapshot(tmp_path):

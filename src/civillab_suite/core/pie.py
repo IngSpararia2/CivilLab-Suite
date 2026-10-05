@@ -257,10 +257,15 @@ class PieService:
                 """
                 SELECT * FROM pie_occurrence_status
                 WHERE (rescheduled_date BETWEEN ? AND ?)
-                   OR (rescheduled_date IS NULL AND occurrence_start <= ?)
+                   OR (occurrence_start BETWEEN ? AND ?)
                 """,
-                (start.isoformat(), end.isoformat(), end.isoformat()),
+                (start.isoformat(), end.isoformat(), (start-timedelta(days=365)).isoformat(), end.isoformat()),
             ).fetchall()
+            satisfaction_rows = connection.execute("""SELECT x.plan_id,x.occurrence_start,max(x.matched_at) AS completed_at
+                FROM pie_result_satisfactions x JOIN shared_results r ON r.id=x.result_id
+                WHERE r.status IN ('VALID','APPROVED','ACCEPTED','FINAL')
+                GROUP BY x.plan_id,x.occurrence_start""").fetchall()
+        satisfied = {(r['plan_id'],r['occurrence_start']):r['completed_at'] for r in satisfaction_rows}
         status = {
             (int(row["plan_id"]), str(row["occurrence_start"]), int(row["day_number"])): row
             for row in status_rows
@@ -269,7 +274,11 @@ class PieService:
             if plan.id is None:
                 continue
             projection_start = start - timedelta(days=max(plan.duration_days, 1))
-            for occurrence_start in self._starts_between(plan, projection_start, end):
+            starts = set(self._starts_between(plan, projection_start, end))
+            starts.update(date.fromisoformat(str(r['occurrence_start'])) for r in status_rows
+                          if r['plan_id']==plan.id and r['rescheduled_date']
+                          and start.isoformat() <= r['rescheduled_date'] <= end.isoformat())
+            for occurrence_start in sorted(starts):
                 for day_number, description in enumerate(plan.steps, 1):
                     original = occurrence_start + timedelta(days=day_number - 1)
                     state = status.get((plan.id, occurrence_start.isoformat(), day_number))
@@ -283,6 +292,9 @@ class PieService:
                         datetime.fromisoformat(str(state["completed_at"]))
                         if state is not None and state["completed_at"] else None
                     )
+                    automatic = satisfied.get((plan.id,occurrence_start.isoformat()))
+                    if completed_at is None and automatic:
+                        completed_at = datetime.fromisoformat(automatic)
                     output.append(
                         PieOccurrence(
                             plan_id=plan.id,
@@ -295,7 +307,7 @@ class PieService:
                             day_number=day_number,
                             step_description=description,
                             completed_at=completed_at,
-                            notes=str(state["notes"]) if state is not None else "",
+                            notes=(str(state["notes"]) if state is not None else "") or ("Satisfecho por resultado compartido" if automatic else ""),
                         )
                     )
         return sorted(
@@ -356,11 +368,12 @@ class PieService:
         path = Path(path)
         if not path.is_file():
             return 0
-        source = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+        from civillab_suite.storage import legacy_reader
+        source = legacy_reader(path, "concretos")
         source.row_factory = sqlite3.Row
         try:
             tables = {row[0] for row in source.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
+                "SELECT name FROM sqlite_master WHERE type='table' UNION SELECT name FROM sqlite_temp_master WHERE type='view'"
             )}
             if not {"pie_inspection_plans", "pie_inspection_steps"}.issubset(tables):
                 return 0
@@ -375,6 +388,7 @@ class PieService:
                 "ORDER BY plan_id, day_number"
             ):
                 steps.setdefault(int(row["plan_id"]), []).append(str(row["description"]))
+            checks = source.execute("SELECT * FROM pie_occurrence_checklist").fetchall() if "pie_occurrence_checklist" in tables else []
         finally:
             source.close()
         imported = 0
@@ -400,17 +414,24 @@ class PieService:
                     source_id=str(row["id"]),
                     active=True,
                 )
+            for check in checks:
+                plan = connection.execute("SELECT id FROM pie_plans WHERE source_module_id='concretos' AND source_table='pie_inspection_plans' AND source_id=?", (str(check['plan_id']),)).fetchone()
+                if plan is not None:
+                    connection.execute("""INSERT OR IGNORE INTO pie_occurrence_status
+                        (plan_id,occurrence_start,day_number,completed_at,notes,updated_at)
+                        VALUES (?,?,?,?,?,?)""", (plan['id'],check['occurrence_start'],check['day_number'],check['completed_at'],'Migrado del checklist legacy',check['completed_at']))
         return imported
 
     def import_prefabricados_legacy(self, path: Path) -> int:
         path = Path(path)
         if not path.is_file():
             return 0
-        source = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+        from civillab_suite.storage import legacy_reader
+        source = legacy_reader(path, "prefabricados")
         source.row_factory = sqlite3.Row
         try:
             tables = {row[0] for row in source.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
+                "SELECT name FROM sqlite_master WHERE type='table' UNION SELECT name FROM sqlite_temp_master WHERE type='view'"
             )}
             if "inspection_plan_entries" not in tables:
                 return 0

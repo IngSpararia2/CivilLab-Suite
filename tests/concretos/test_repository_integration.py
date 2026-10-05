@@ -2,7 +2,6 @@ from pathlib import Path
 
 from concrete_mix_designer.config import APP_NAME, APP_VERSION
 
-
 ROOT = Path(__file__).resolve().parents[2]
 
 

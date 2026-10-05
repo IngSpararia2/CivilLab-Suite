@@ -34,16 +34,15 @@ def build_suite_context(
     registry: ModuleRegistry,
     navigate: Callable[[NavigationTarget], None],
 ) -> SuiteContext:
-    from concrete_mix_designer.config import DATABASE_PATH
-    from concrete_mix_designer.data.calendar_repository import CalendarRepository
     from civillab_suite.modules.concretos.scheduling import ConcretosScheduleProvider
     from civillab_suite.modules.prefabricados.scheduling import PrefabricadosScheduleProvider
+    from concrete_mix_designer.data.calendar_repository import CalendarRepository
 
     catalog = CatalogService(database)
     pie = PieService(database)
     providers = [PieScheduleProvider(pie)]
     if registry.is_enabled("concretos"):
-        providers.append(ConcretosScheduleProvider(CalendarRepository(DATABASE_PATH)))
+        providers.append(ConcretosScheduleProvider(CalendarRepository(database.path)))
     if registry.is_enabled("prefabricados"):
         providers.append(PrefabricadosScheduleProvider())
     return SuiteContext(

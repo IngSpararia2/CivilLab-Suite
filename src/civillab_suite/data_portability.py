@@ -19,7 +19,7 @@ from uuid import uuid4
 from civillab_suite.config import APP_VERSION, core_database_path, suite_data_dir
 
 FORMAT_ID = "civillab-suite-data"
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 MANIFEST_NAME = "manifest.json"
 SQLITE_COMPONENTS = {
     "core": "data/core.sqlite3",
@@ -58,14 +58,13 @@ class ImportResult:
 
 
 def default_data_locations() -> DataLocations:
-    from concrete_mix_designer.config import DATABASE_PATH, user_data_dir
-    from precon_lab.config import database_path
+    from concrete_mix_designer.config import user_data_dir
 
     return DataLocations(
         suite_directory=suite_data_dir(),
         core_database=core_database_path(),
-        concrete_database=Path(DATABASE_PATH),
-        prefabricados_database=database_path(),
+        concrete_database=core_database_path(),
+        prefabricados_database=core_database_path(),
         concrete_directory=user_data_dir(),
     )
 
@@ -100,12 +99,13 @@ def _check_sqlite(path: Path) -> None:
     try:
         connection = sqlite3.connect(f"file:{path.resolve().as_posix()}?mode=ro", uri=True)
         try:
-            result = connection.execute("PRAGMA quick_check").fetchone()
+            result = connection.execute("PRAGMA integrity_check").fetchone()
+            foreign = connection.execute("PRAGMA foreign_key_check").fetchall()
         finally:
             connection.close()
     except sqlite3.Error as error:
         raise DataPortabilityError(f"La base {path.name} no es SQLite válida: {error}") from error
-    if not result or result[0] != "ok":
+    if not result or result[0] != "ok" or foreign:
         raise DataPortabilityError(f"La verificación de integridad falló para {path.name}.")
 
 
@@ -119,6 +119,9 @@ class DataPortabilityService:
         self.locations = locations or default_data_locations()
 
     def _database_sources(self) -> dict[str, Path]:
+        from civillab_suite.storage import is_unified
+        if is_unified(self.locations.core_database):
+            return {"core": self.locations.core_database}
         return {
             "core": self.locations.core_database,
             "concretos": self.locations.concrete_database,
@@ -167,7 +170,7 @@ class DataPortabilityService:
 
             manifest = {
                 "format": FORMAT_ID,
-                "format_version": FORMAT_VERSION,
+                "format_version": FORMAT_VERSION if len(self._database_sources()) == 1 else 1,
                 "app_version": APP_VERSION,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "components": components,
@@ -252,6 +255,8 @@ class DataPortabilityService:
                     raise DataPortabilityError(
                         f"Checksum incorrecto para {component['name']}."
                     )
+                if destination.stat().st_size != component.get("size"):
+                    raise DataPortabilityError("Tamaño de componente incorrecto.")
                 if component["kind"] == "sqlite":
                     _check_sqlite(destination)
             yield manifest, staging
@@ -262,7 +267,7 @@ class DataPortabilityService:
             raise DataPortabilityError("El manifiesto debe ser un objeto JSON.")
         if manifest.get("format") != FORMAT_ID:
             raise DataPortabilityError("El archivo no pertenece a CivilLab Suite.")
-        if manifest.get("format_version") != FORMAT_VERSION:
+        if manifest.get("format_version") not in {1, FORMAT_VERSION}:
             raise DataPortabilityError("La versión del formato .civillab no es compatible.")
         if not isinstance(manifest.get("app_version"), str) or not isinstance(
             manifest.get("created_at"), str
@@ -303,13 +308,32 @@ class DataPortabilityService:
             paths.add(path)
             names.add(logical_name)
 
-        if not set(SQLITE_COMPONENTS).issubset(names):
-            raise DataPortabilityError("El paquete no contiene las tres bases requeridas.")
+        required = set(SQLITE_COMPONENTS) if manifest["format_version"] == 1 else {"core"}
+        if not required.issubset(names):
+            raise DataPortabilityError("El paquete no contiene las bases requeridas.")
+        if manifest["format_version"] == 2 and names & {"concretos", "prefabricados"}:
+            raise DataPortabilityError("El formato 2 requiere una única base Core.")
         if archive_names != paths | {MANIFEST_NAME}:
             raise DataPortabilityError("El ZIP contiene entradas no declaradas en el manifiesto.")
 
     def import_data(self, package_path: Path) -> ImportResult:
         with self._validated_staging(Path(package_path)) as (manifest, staging):
+            from civillab_suite.storage import is_unified, migrate_workspace
+            unified_target = is_unified(self.locations.core_database) or len(set(self._database_sources().values())) == 1
+            if manifest["format_version"] == 1 and unified_target:
+                migrate_workspace(staging / SQLITE_COMPONENTS["core"],
+                                  staging / SQLITE_COMPONENTS["concretos"],
+                                  staging / SQLITE_COMPONENTS["prefabricados"])
+                manifest = dict(manifest, format_version=2, components=[
+                    item for item in manifest["components"] if item["name"] not in {"concretos", "prefabricados"}
+                ])
+            if manifest["format_version"] == 2:
+                if not is_unified(staging / SQLITE_COMPONENTS["core"]):
+                    raise DataPortabilityError("La base no contiene el esquema unificado.")
+                from civillab_suite.diagnostics import diagnose
+                errors = diagnose(staging / SQLITE_COMPONENTS["core"])["errors"]
+                if errors:
+                    raise DataPortabilityError("La base importada no es válida: " + "; ".join(errors))
             backup_directory = self.locations.suite_directory / "backups"
             backup_directory.mkdir(parents=True, exist_ok=True)
             stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -322,6 +346,8 @@ class DataPortabilityService:
 
             incoming = self._incoming_targets(manifest, staging)
             self._normalize_report_preferences(incoming)
+            from precon_lab.database import dispose_database_connections
+            dispose_database_connections()
             self._replace_all(incoming)
             return ImportResult(
                 backup_path=backup_path,
@@ -335,10 +361,11 @@ class DataPortabilityService:
     ) -> dict[Path, Path | None]:
         targets: dict[Path, Path | None] = {
             self.locations.core_database: None,
-            self.locations.concrete_database: None,
-            self.locations.prefabricados_database: None,
             self.locations.concrete_directory / "report_preferences.json": None,
         }
+        if manifest["format_version"] == 1:
+            targets[self.locations.concrete_database] = None
+            targets[self.locations.prefabricados_database] = None
         for existing_logo in self.locations.concrete_directory.glob("report_logo.*"):
             if existing_logo.suffix.lower() in REPORT_LOGO_SUFFIXES:
                 targets[existing_logo] = None
@@ -359,6 +386,20 @@ class DataPortabilityService:
                 target = self.locations.concrete_directory / PurePosixPath(archive_path).name
             targets[target] = staging / PurePosixPath(archive_path)
         return targets
+
+    def new_environment(self) -> Path:
+        """Back up all current data before publishing a structurally empty workspace."""
+        from civillab_suite.storage import initialize_workspace, validate_sqlite
+        backup = self.locations.suite_directory / "backups" / f"antes-de-nuevo-{uuid4().hex}.civillab"
+        with tempfile.TemporaryDirectory(prefix="civillab-new-") as temporary:
+            fresh = Path(temporary) / "core.sqlite3"
+            initialize_workspace(fresh)
+            validate_sqlite(fresh)
+            self.export_data(backup)
+            from precon_lab.database import dispose_database_connections
+            dispose_database_connections()
+            self._replace_all({self.locations.core_database: fresh})
+        return backup
 
     @staticmethod
     def _normalize_report_preferences(incoming: dict[Path, Path | None]) -> None:
@@ -389,6 +430,7 @@ class DataPortabilityService:
         prepared: dict[Path, Path] = {}
         rollbacks: dict[Path, Path] = {}
         committed: list[Path] = []
+        replacement_succeeded = False
         try:
             for target, source in incoming.items():
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -397,7 +439,10 @@ class DataPortabilityService:
                     shutil.copy2(source, prepared_path)
                     prepared[target] = prepared_path
 
+            from civillab_suite.storage import prepare_sqlite_replacement
             for target in incoming:
+                if target.suffix in {".sqlite3", ".db"}:
+                    prepare_sqlite_replacement(target)
                 rollback_path = target.with_name(f".{target.name}.{token}.rollback")
                 if target.exists():
                     os.replace(target, rollback_path)
@@ -405,6 +450,7 @@ class DataPortabilityService:
                 if target in prepared:
                     os.replace(prepared[target], target)
                 committed.append(target)
+            replacement_succeeded = True
         except Exception as error:
             for target in reversed(committed):
                 target.unlink(missing_ok=True)
@@ -418,5 +464,8 @@ class DataPortabilityService:
                 f"No se completó la restauración; se conservaron los datos anteriores: {error}"
             ) from error
         finally:
-            for path in (*prepared.values(), *rollbacks.values()):
+            for path in prepared.values():
                 path.unlink(missing_ok=True)
+            if replacement_succeeded:
+                for path in rollbacks.values():
+                    path.unlink(missing_ok=True)

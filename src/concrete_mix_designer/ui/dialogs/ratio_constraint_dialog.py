@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
 
 from concrete_mix_designer.domain.models import ConstraintMode, MaterialCategory
 
-
 CONSTRAINT_LABELS = {
     ConstraintMode.MASS_RATIO: "Relación por masa A/B",
     ConstraintMode.PERCENT_OF_B: "A como porcentaje de B",

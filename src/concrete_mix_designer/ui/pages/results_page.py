@@ -197,6 +197,10 @@ class ResultsPage(QWidget):
         card_layout.addLayout(controls)
         card_layout.addWidget(self.design_summary)
         card_layout.addWidget(self.moisture_warning)
+        from concrete_mix_designer.ui.moisture_widget import MoistureWidget
+        self.moistures = MoistureWidget()
+        self.moistures.changed.connect(self._refresh_dosage_table)
+        card_layout.addWidget(self.moistures)
         card_layout.addWidget(self.table, 1)
         card_layout.addWidget(note)
 
@@ -246,6 +250,7 @@ class ResultsPage(QWidget):
         except Exception as error:
             QMessageBox.critical(self, "No se pudo cargar el diseño", str(error))
             return
+        self.moistures.set_design(self._selected_design)
         spec = self._specification
         strength = spec.primary_strength_mpa
         consistency = spec.consistency_value_mm
@@ -269,6 +274,7 @@ class ResultsPage(QWidget):
             self.moisture_warning.hide()
             return
         try:
+            self._selected_design.batch_moistures = self.moistures.values()
             self._rows = self.state.engine.moisture_correction(self._selected_design)
         except ValueError as error:
             self._rows = []
@@ -346,6 +352,7 @@ class ResultsPage(QWidget):
             selected_design_id=self._selected_record.id,
             initial_batch_volume_m3=self.batch_spin.value(),
             lock_design=True,
+            initial_moistures=self.moistures.values(),
             parent=self,
         )
         if dialog.exec():
@@ -394,6 +401,9 @@ class ResultsPage(QWidget):
                     "Aporte de agua kg",
                     "Diseño por amasada",
                     "Corregido por amasada",
+                    "Absorción % OD",
+                    "Humedad actual % OD",
+                    "Base de diseño",
                 ]
             )
             for row in self._rows:
@@ -408,6 +418,9 @@ class ResultsPage(QWidget):
                         f"{float(row['water_contribution']):+.3f}",
                         f"{design * factor:.3f}",
                         f"{corrected * factor:.3f}",
+                        row.get("absorption_pct", ""),
+                        row.get("moisture_pct", ""),
+                        row.get("mass_basis", ""),
                     ]
                 )
         self.state.message.emit("Dosificación CSV exportada.")
